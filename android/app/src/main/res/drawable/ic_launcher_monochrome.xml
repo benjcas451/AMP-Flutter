@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Temporary launcher glyph: server stack. LEDs and slots are evenOdd cut-outs. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M35,32H73A3,3 0,0 1,76,35V41A3,3 0,0 1,73,44H35A3,3 0,0 1,32,41V35A3,3 0,0 1,35,32ZM37.1,38A2.4,2.4 0,1 0,41.9,38A2.4,2.4 0,1 0,37.1,38ZM51.2,36.8H68.8A1.2,1.2 0,0 1,70,38V38A1.2,1.2 0,0 1,68.8,39.2H51.2A1.2,1.2 0,0 1,50,38V38A1.2,1.2 0,0 1,51.2,36.8ZM35,48H73A3,3 0,0 1,76,51V57A3,3 0,0 1,73,60H35A3,3 0,0 1,32,57V51A3,3 0,0 1,35,48ZM37.1,54A2.4,2.4 0,1 0,41.9,54A2.4,2.4 0,1 0,37.1,54ZM51.2,52.8H68.8A1.2,1.2 0,0 1,70,54V54A1.2,1.2 0,0 1,68.8,55.2H51.2A1.2,1.2 0,0 1,50,54V54A1.2,1.2 0,0 1,51.2,52.8ZM35,64H73A3,3 0,0 1,76,67V73A3,3 0,0 1,73,76H35A3,3 0,0 1,32,73V67A3,3 0,0 1,35,64ZM37.1,70A2.4,2.4 0,1 0,41.9,70A2.4,2.4 0,1 0,37.1,70ZM51.2,68.8H68.8A1.2,1.2 0,0 1,70,70V70A1.2,1.2 0,0 1,68.8,71.2H51.2A1.2,1.2 0,0 1,50,70V70A1.2,1.2 0,0 1,51.2,68.8Z" />
+</vector>

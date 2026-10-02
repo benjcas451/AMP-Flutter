@@ -36,7 +36,7 @@ flutter build ipa            # iOS (macOS + Xcode erforderlich)
 flutter test
 ```
 
-Vor einer Veröffentlichung die Bundle-ID `com.example.amp_control` anpassen.
+Bundle-ID: iOS `de.tschapps.ampControl`, Android `de.tschapps.amp_control`.
 
 ## Hinweise
 
