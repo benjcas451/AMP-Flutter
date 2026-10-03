@@ -42,6 +42,9 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   bool _tasksBusy = false;
   bool _updateBusy = false;
 
+  final Map<String, String> _tabErrors = {};
+  final Map<String, bool> _tabLoading = {};
+
   @override
   void initState() {
     super.initState();
@@ -84,68 +87,96 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     }
   }
 
-  Future<void> _loadUsers() async {
+  Future<T?> _tryLoad<T>(
+    String tab,
+    Future<T> Function() fetch,
+    void Function(T value) assign,
+  ) async {
+    if (!mounted) return null;
+    setState(() {
+      _tabLoading[tab] = true;
+      _tabErrors.remove(tab);
+    });
     try {
-      final users = await _client.getUsers(_id);
-      if (mounted) setState(() => _users = users);
+      final result = await fetch();
+      if (mounted) {
+        setState(() {
+          assign(result);
+          _tabLoading[tab] = false;
+        });
+      }
+      return result;
     } on AmpException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted) {
+        setState(() {
+          _tabErrors[tab] = e.message;
+          _tabLoading[tab] = false;
+        });
+      }
+      return null;
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _tabErrors[tab] = 'Unerwarteter Fehler: $e';
+          _tabLoading[tab] = false;
+        });
+      }
+      return null;
     }
   }
 
-  Future<void> _loadBackups() async {
-    try {
-      final backups = await _client.getBackups(_id);
-      if (mounted) setState(() => _backups = backups);
-    } on AmpException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    }
-  }
+  Future<void> _loadUsers() =>
+      _tryLoad<List<String>>('', () => _client.getUsers(_id), (List<String> v) {
+        _users = v;
+      });
 
-  Future<void> _loadFiles() async {
-    try {
-      final files = await _client.getFiles(_id);
-      if (mounted) setState(() => _files = files);
-    } on AmpException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    }
-  }
+  Future<void> _loadBackups() => _tryLoad<List<BackupEntry>>(
+    'backups',
+    () => _client.getBackups(_id),
+    (List<BackupEntry> v) {
+      _backups = v;
+    },
+  );
 
-  Future<void> _loadSettings() async {
-    try {
-      final settings = await _client.getSettings(_id);
-      if (mounted) setState(() => _settings = settings);
-    } on AmpException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    }
-  }
+  Future<void> _loadFiles() => _tryLoad<List<FileEntry>>(
+    'files',
+    () => _client.getFiles(_id),
+    (List<FileEntry> v) {
+      _files = v;
+    },
+  );
 
-  Future<void> _loadTasks() async {
-    try {
-      final tasks = await _client.getTasks(_id);
-      if (mounted) setState(() => _tasks = tasks);
-    } on AmpException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    }
-  }
+  Future<void> _loadSettings() => _tryLoad<List<SettingEntry>>(
+    'settings',
+    () => _client.getSettings(_id),
+    (List<SettingEntry> v) {
+      _settings = v;
+    },
+  );
 
-  Future<void> _loadEvents() async {
-    try {
-      final events = await _client.getEvents(_id);
-      if (mounted) setState(() => _events = events);
-    } on AmpException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    }
-  }
+  Future<void> _loadTasks() => _tryLoad<List<SchedulerTask>>(
+    'tasks',
+    () => _client.getTasks(_id),
+    (List<SchedulerTask> v) {
+      _tasks = v;
+    },
+  );
 
-  Future<void> _loadUpdateStatus() async {
-    try {
-      final status = await _client.getUpdateStatus(_id);
-      if (mounted) setState(() => _updateStatus = status);
-    } on AmpException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    }
-  }
+  Future<void> _loadEvents() => _tryLoad<List<AmpEvent>>(
+    'events',
+    () => _client.getEvents(_id),
+    (List<AmpEvent> v) {
+      _events = v;
+    },
+  );
+
+  Future<void> _loadUpdateStatus() => _tryLoad<Map<String, dynamic>>(
+    'updates',
+    () => _client.getUpdateStatus(_id),
+    (Map<String, dynamic> v) {
+      _updateStatus = v;
+    },
+  );
 
   String _nextBackupName() {
     final stamp = DateTime.now().toUtc().toIso8601String();
@@ -640,6 +671,8 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
                     onCreate: _createBackup,
                     onRestore: _restoreBackup,
                     onDelete: _deleteBackup,
+                    loading: _tabLoading['backups'] ?? false,
+                    error: _tabErrors['backups'],
                   ),
                   _FilesTab(
                     files: _files,
@@ -648,25 +681,38 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
                     onCreateFolder: _createFolder,
                     onDelete: _deleteFile,
                     onRename: _renameFile,
+                    loading: _tabLoading['files'] ?? false,
+                    error: _tabErrors['files'],
                   ),
                   _SettingsTab(
                     settings: _settings,
                     busy: _settingsBusy,
                     onRefresh: _loadSettings,
                     onEdit: _editSetting,
+                    loading: _tabLoading['settings'] ?? false,
+                    error: _tabErrors['settings'],
                   ),
                   _TasksTab(
                     tasks: _tasks,
                     busy: _tasksBusy,
                     onRefresh: _loadTasks,
                     onToggle: _toggleTask,
+                    loading: _tabLoading['tasks'] ?? false,
+                    error: _tabErrors['tasks'],
                   ),
-                  _EventsTab(events: _events, onRefresh: _loadEvents),
+                  _EventsTab(
+                    events: _events,
+                    onRefresh: _loadEvents,
+                    loading: _tabLoading['events'] ?? false,
+                    error: _tabErrors['events'],
+                  ),
                   _UpdatesTab(
                     status: _updateStatus,
                     busy: _updateBusy,
                     onRefresh: _loadUpdateStatus,
                     onRunUpdate: _runUpdate,
+                    loading: _tabLoading['updates'] ?? false,
+                    error: _tabErrors['updates'],
                   ),
                 ],
               ),
@@ -954,6 +1000,8 @@ class _BackupsTab extends StatelessWidget {
     required this.onRestore,
     required this.onDelete,
     this.busy = false,
+    this.loading = false,
+    this.error,
   });
 
   final List<BackupEntry>? backups;
@@ -962,12 +1010,35 @@ class _BackupsTab extends StatelessWidget {
   final Future<void> Function(BackupEntry) onRestore;
   final Future<void> Function(BackupEntry) onDelete;
   final bool busy;
+  final bool loading;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
     final list = backups;
     if (list == null) {
-      return const Center(child: CircularProgressIndicator());
+      if (loading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (error != null) {
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              Text(error!, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Erneut versuchen'),
+              ),
+            ],
+          ),
+        );
+      }
+      return const Center(child: Text('Wird geladen…'));
     }
     return RefreshIndicator(
       onRefresh: onRefresh,
@@ -1050,6 +1121,8 @@ class _FilesTab extends StatelessWidget {
     required this.onDelete,
     required this.onRename,
     this.busy = false,
+    this.loading = false,
+    this.error,
   });
 
   final List<FileEntry>? files;
@@ -1058,12 +1131,35 @@ class _FilesTab extends StatelessWidget {
   final Future<void> Function(FileEntry) onDelete;
   final Future<void> Function(FileEntry) onRename;
   final bool busy;
+  final bool loading;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
     final list = files;
     if (list == null) {
-      return const Center(child: CircularProgressIndicator());
+      if (loading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (error != null) {
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              Text(error!, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Erneut versuchen'),
+              ),
+            ],
+          ),
+        );
+      }
+      return const Center(child: Text('Wird geladen…'));
     }
     return RefreshIndicator(
       onRefresh: onRefresh,
@@ -1151,18 +1247,43 @@ class _SettingsTab extends StatelessWidget {
     required this.onRefresh,
     required this.onEdit,
     this.busy = false,
+    this.loading = false,
+    this.error,
   });
 
   final List<SettingEntry>? settings;
   final Future<void> Function() onRefresh;
   final Future<void> Function(SettingEntry) onEdit;
   final bool busy;
+  final bool loading;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
     final list = settings;
     if (list == null) {
-      return const Center(child: CircularProgressIndicator());
+      if (loading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (error != null) {
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              Text(error!, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Erneut versuchen'),
+              ),
+            ],
+          ),
+        );
+      }
+      return const Center(child: Text('Wird geladen…'));
     }
     return RefreshIndicator(
       onRefresh: onRefresh,
@@ -1210,18 +1331,43 @@ class _TasksTab extends StatelessWidget {
     required this.onRefresh,
     required this.onToggle,
     this.busy = false,
+    this.loading = false,
+    this.error,
   });
 
   final List<SchedulerTask>? tasks;
   final Future<void> Function() onRefresh;
   final Future<void> Function(SchedulerTask) onToggle;
   final bool busy;
+  final bool loading;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
     final list = tasks;
     if (list == null) {
-      return const Center(child: CircularProgressIndicator());
+      if (loading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (error != null) {
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              Text(error!, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Erneut versuchen'),
+              ),
+            ],
+          ),
+        );
+      }
+      return const Center(child: Text('Wird geladen…'));
     }
     return RefreshIndicator(
       onRefresh: onRefresh,
@@ -1267,16 +1413,44 @@ class _TasksTab extends StatelessWidget {
 // -----------------------------------------------------------------------------
 
 class _EventsTab extends StatelessWidget {
-  const _EventsTab({required this.events, required this.onRefresh});
+  const _EventsTab({
+    required this.events,
+    required this.onRefresh,
+    this.loading = false,
+    this.error,
+  });
 
   final List<AmpEvent>? events;
   final Future<void> Function() onRefresh;
+  final bool loading;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
     final list = events;
     if (list == null) {
-      return const Center(child: CircularProgressIndicator());
+      if (loading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (error != null) {
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              Text(error!, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Erneut versuchen'),
+              ),
+            ],
+          ),
+        );
+      }
+      return const Center(child: Text('Wird geladen…'));
     }
     return RefreshIndicator(
       onRefresh: onRefresh,
@@ -1331,18 +1505,43 @@ class _UpdatesTab extends StatelessWidget {
     required this.onRefresh,
     required this.onRunUpdate,
     this.busy = false,
+    this.loading = false,
+    this.error,
   });
 
   final Map<String, dynamic>? status;
   final Future<void> Function() onRefresh;
   final Future<void> Function() onRunUpdate;
   final bool busy;
+  final bool loading;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
     final data = status;
     if (data == null) {
-      return const Center(child: CircularProgressIndicator());
+      if (loading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (error != null) {
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              Text(error!, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Erneut versuchen'),
+              ),
+            ],
+          ),
+        );
+      }
+      return const Center(child: Text('Wird geladen…'));
     }
     final available = data['UpdateAvailable'] == true;
     final current = data['CurrentVersion']?.toString() ?? 'Unbekannt';
