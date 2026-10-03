@@ -38,6 +38,26 @@ class AmpClient {
   String? _adsSession;
   final Map<String, String> _instanceSessions = {};
 
+  /// Track which API methods are supported by this AMP installation.
+  /// Populated lazily when a "missing method" error is detected.
+  final Set<String> supportedMethods = {};
+  final Set<String> unsupportedMethods = {};
+
+  bool isMethodSupported(String method) {
+    if (supportedMethods.contains(method)) return true;
+    if (unsupportedMethods.contains(method)) return false;
+    return true; // Assume supported until proven otherwise
+  }
+
+  void markMethodUnsupported(String method) {
+    unsupportedMethods.add(method);
+  }
+
+  void markMethodSupported(String method) {
+    supportedMethods.add(method);
+    unsupportedMethods.remove(method);
+  }
+
   static String normalizeUrl(String url) {
     var u = url.trim();
     if (u.isEmpty) return u;
@@ -192,13 +212,21 @@ class AmpClient {
     }
 
     try {
-      return await _post(
+      final result = await _post(
         module,
         method,
         params,
         instanceId: instanceId,
         session: await session(),
       );
+      markMethodSupported(method);
+      return result;
+    } on AmpException catch (e) {
+      if (e.message.toLowerCase().contains('missing') ||
+          e.message.toLowerCase().contains('nicht gefunden')) {
+        markMethodUnsupported(method);
+      }
+      rethrow;
     } on _Unauthorized {
       invalidate();
       try {

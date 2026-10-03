@@ -45,18 +45,57 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   final Map<String, String> _tabErrors = {};
   final Map<String, bool> _tabLoading = {};
 
+  static const _tabConfig = {
+    'backups': _TabSpec(
+      method: 'GetBackups',
+      icon: Icon(Icons.backup_outlined),
+      label: 'Backups',
+    ),
+    'files': _TabSpec(
+      method: 'GetFiles',
+      icon: Icon(Icons.folder_open),
+      label: 'Dateien',
+    ),
+    'settings': _TabSpec(
+      method: 'GetSettings',
+      icon: Icon(Icons.tune),
+      label: 'Settings',
+    ),
+    'tasks': _TabSpec(
+      method: 'GetTasks',
+      icon: Icon(Icons.schedule),
+      label: 'Tasks',
+    ),
+    'events': _TabSpec(
+      method: 'GetEventLog',
+      icon: Icon(Icons.notifications_outlined),
+      label: 'Events',
+    ),
+    'updates': _TabSpec(
+      method: 'GetUpdateStatus',
+      icon: Icon(Icons.system_update_alt),
+      label: 'Updates',
+    ),
+  };
+
+  bool _isTabSupported(String tab) {
+    final spec = _tabConfig[tab];
+    if (spec == null) return true;
+    return _client.isMethodSupported(spec.method);
+  }
+
   @override
   void initState() {
     super.initState();
     _client = context.read<AppModel>().client;
     _poll();
     _loadUsers();
-    _loadBackups();
-    _loadFiles();
-    _loadSettings();
-    _loadTasks();
-    _loadEvents();
-    _loadUpdateStatus();
+    if (_isTabSupported('backups')) _loadBackups();
+    if (_isTabSupported('files')) _loadFiles();
+    if (_isTabSupported('settings')) _loadSettings();
+    if (_isTabSupported('tasks')) _loadTasks();
+    if (_isTabSupported('events')) _loadEvents();
+    if (_isTabSupported('updates')) _loadUpdateStatus();
     _timer = Timer.periodic(const Duration(seconds: 2), (_) => _poll());
   }
 
@@ -596,8 +635,141 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Build visible tabs based on which AMP API methods are supported
+    final allTabs = <_TabEntry>[
+      _TabEntry(
+        id: 'overview',
+        spec: const _TabSpec(
+          method: '',
+          icon: Icon(Icons.dashboard_outlined),
+          label: 'Übersicht',
+        ),
+        body: _OverviewTab(
+          status: _status,
+          busy: _actionBusy,
+          onStart: () => _run('Starten', () => _client.startServer(_id)),
+          onStop: () =>
+              _run('Stoppen', () => _client.stopServer(_id), confirm: true),
+          onRestart: () => _run(
+            'Neustarten',
+            () => _client.restartServer(_id),
+            confirm: true,
+          ),
+          onKill: () => _run(
+            'Beenden erzwingen',
+            () => _client.killServer(_id),
+            confirm: true,
+          ),
+        ),
+      ),
+      _TabEntry(
+        id: 'console',
+        spec: const _TabSpec(
+          method: '',
+          icon: Icon(Icons.terminal),
+          label: 'Konsole',
+        ),
+        body: _ConsoleTab(
+          entries: _console,
+          onSend: (msg) async {
+            await _client.sendConsole(_id, msg);
+            _poll();
+          },
+        ),
+      ),
+      _TabEntry(
+        id: 'users',
+        spec: const _TabSpec(
+          method: '',
+          icon: Icon(Icons.people_outline),
+          label: 'Spieler',
+        ),
+        body: _UsersTab(users: _users, onRefresh: _loadUsers),
+      ),
+      if (_isTabSupported('backups'))
+        _TabEntry(
+          id: 'backups',
+          spec: _tabConfig['backups']!,
+          body: _BackupsTab(
+            backups: _backups,
+            onRefresh: _loadBackups,
+            busy: _backupActionBusy,
+            onCreate: _createBackup,
+            onRestore: _restoreBackup,
+            onDelete: _deleteBackup,
+            loading: _tabLoading['backups'] ?? false,
+            error: _tabErrors['backups'],
+          ),
+        ),
+      if (_isTabSupported('files'))
+        _TabEntry(
+          id: 'files',
+          spec: _tabConfig['files']!,
+          body: _FilesTab(
+            files: _files,
+            onRefresh: _loadFiles,
+            busy: _fileActionBusy,
+            onCreateFolder: _createFolder,
+            onDelete: _deleteFile,
+            onRename: _renameFile,
+            loading: _tabLoading['files'] ?? false,
+            error: _tabErrors['files'],
+          ),
+        ),
+      if (_isTabSupported('settings'))
+        _TabEntry(
+          id: 'settings',
+          spec: _tabConfig['settings']!,
+          body: _SettingsTab(
+            settings: _settings,
+            busy: _settingsBusy,
+            onRefresh: _loadSettings,
+            onEdit: _editSetting,
+            loading: _tabLoading['settings'] ?? false,
+            error: _tabErrors['settings'],
+          ),
+        ),
+      if (_isTabSupported('tasks'))
+        _TabEntry(
+          id: 'tasks',
+          spec: _tabConfig['tasks']!,
+          body: _TasksTab(
+            tasks: _tasks,
+            busy: _tasksBusy,
+            onRefresh: _loadTasks,
+            onToggle: _toggleTask,
+            loading: _tabLoading['tasks'] ?? false,
+            error: _tabErrors['tasks'],
+          ),
+        ),
+      if (_isTabSupported('events'))
+        _TabEntry(
+          id: 'events',
+          spec: _tabConfig['events']!,
+          body: _EventsTab(
+            events: _events,
+            onRefresh: _loadEvents,
+            loading: _tabLoading['events'] ?? false,
+            error: _tabErrors['events'],
+          ),
+        ),
+      if (_isTabSupported('updates'))
+        _TabEntry(
+          id: 'updates',
+          spec: _tabConfig['updates']!,
+          body: _UpdatesTab(
+            status: _updateStatus,
+            busy: _updateBusy,
+            onRefresh: _loadUpdateStatus,
+            onRunUpdate: _runUpdate,
+            loading: _tabLoading['updates'] ?? false,
+            error: _tabErrors['updates'],
+          ),
+        ),
+    ];
+
     return DefaultTabController(
-      length: 9,
+      length: allTabs.length,
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.instance.displayName),
@@ -608,20 +780,12 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
                 child: Center(child: StateBadge(_status!.state)),
               ),
           ],
-          bottom: const TabBar(
+          bottom: TabBar(
             isScrollable: true,
             tabAlignment: TabAlignment.start,
-            tabs: [
-              Tab(icon: Icon(Icons.dashboard_outlined), text: 'Übersicht'),
-              Tab(icon: Icon(Icons.terminal), text: 'Konsole'),
-              Tab(icon: Icon(Icons.people_outline), text: 'Spieler'),
-              Tab(icon: Icon(Icons.backup_outlined), text: 'Backups'),
-              Tab(icon: Icon(Icons.folder_open), text: 'Dateien'),
-              Tab(icon: Icon(Icons.tune), text: 'Settings'),
-              Tab(icon: Icon(Icons.schedule), text: 'Tasks'),
-              Tab(icon: Icon(Icons.notifications_outlined), text: 'Events'),
-              Tab(icon: Icon(Icons.system_update_alt), text: 'Updates'),
-            ],
+            tabs: allTabs
+                .map((t) => Tab(icon: t.spec.icon, text: t.spec.label))
+                .toList(),
           ),
         ),
         body: Column(
@@ -635,89 +799,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
                 ],
               ),
             Expanded(
-              child: TabBarView(
-                children: [
-                  _OverviewTab(
-                    status: _status,
-                    busy: _actionBusy,
-                    onStart: () =>
-                        _run('Starten', () => _client.startServer(_id)),
-                    onStop: () => _run(
-                      'Stoppen',
-                      () => _client.stopServer(_id),
-                      confirm: true,
-                    ),
-                    onRestart: () => _run(
-                      'Neustarten',
-                      () => _client.restartServer(_id),
-                      confirm: true,
-                    ),
-                    onKill: () => _run(
-                      'Beenden erzwingen',
-                      () => _client.killServer(_id),
-                      confirm: true,
-                    ),
-                  ),
-                  _ConsoleTab(
-                    entries: _console,
-                    onSend: (msg) async {
-                      await _client.sendConsole(_id, msg);
-                      _poll();
-                    },
-                  ),
-                  _UsersTab(users: _users, onRefresh: _loadUsers),
-                  _BackupsTab(
-                    backups: _backups,
-                    onRefresh: _loadBackups,
-                    busy: _backupActionBusy,
-                    onCreate: _createBackup,
-                    onRestore: _restoreBackup,
-                    onDelete: _deleteBackup,
-                    loading: _tabLoading['backups'] ?? false,
-                    error: _tabErrors['backups'],
-                  ),
-                  _FilesTab(
-                    files: _files,
-                    onRefresh: _loadFiles,
-                    busy: _fileActionBusy,
-                    onCreateFolder: _createFolder,
-                    onDelete: _deleteFile,
-                    onRename: _renameFile,
-                    loading: _tabLoading['files'] ?? false,
-                    error: _tabErrors['files'],
-                  ),
-                  _SettingsTab(
-                    settings: _settings,
-                    busy: _settingsBusy,
-                    onRefresh: _loadSettings,
-                    onEdit: _editSetting,
-                    loading: _tabLoading['settings'] ?? false,
-                    error: _tabErrors['settings'],
-                  ),
-                  _TasksTab(
-                    tasks: _tasks,
-                    busy: _tasksBusy,
-                    onRefresh: _loadTasks,
-                    onToggle: _toggleTask,
-                    loading: _tabLoading['tasks'] ?? false,
-                    error: _tabErrors['tasks'],
-                  ),
-                  _EventsTab(
-                    events: _events,
-                    onRefresh: _loadEvents,
-                    loading: _tabLoading['events'] ?? false,
-                    error: _tabErrors['events'],
-                  ),
-                  _UpdatesTab(
-                    status: _updateStatus,
-                    busy: _updateBusy,
-                    onRefresh: _loadUpdateStatus,
-                    onRunUpdate: _runUpdate,
-                    loading: _tabLoading['updates'] ?? false,
-                    error: _tabErrors['updates'],
-                  ),
-                ],
-              ),
+              child: TabBarView(children: allTabs.map((t) => t.body).toList()),
             ),
           ],
         ),
@@ -1583,4 +1665,24 @@ class _UpdatesTab extends StatelessWidget {
       ),
     );
   }
+}
+
+class _TabSpec {
+  const _TabSpec({
+    required this.method,
+    required this.icon,
+    required this.label,
+  });
+
+  final String method;
+  final Icon icon;
+  final String label;
+}
+
+class _TabEntry {
+  const _TabEntry({required this.id, required this.spec, required this.body});
+
+  final String id;
+  final _TabSpec spec;
+  final Widget body;
 }
