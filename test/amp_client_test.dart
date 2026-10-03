@@ -61,6 +61,51 @@ void main() {
     httpClient: fakeFilesAmp(),
   );
 
+  final mockSettings = {
+    'ServerName': {
+      'Name': 'ServerName',
+      'Value': 'My Server',
+      'Type': 'String',
+      'Description': 'Name of the server shown in the list',
+    },
+    'MaxPlayers': {
+      'Name': 'MaxPlayers',
+      'Value': '20',
+      'Type': 'Integer',
+      'Description': 'Maximum number of players',
+    },
+  };
+
+  MockClient fakeSettingsAmp() => MockClient((req) async {
+    final path = req.url.path;
+    final body = jsonDecode(req.body) as Map<String, dynamic>;
+    calls.add(path);
+    bodies.add(body);
+
+    if (path.endsWith('/API/Core/Login')) {
+      final sid = 'sid${++sessionCounter}';
+      validSessions.add(sid);
+      return json({'success': true, 'sessionID': sid});
+    }
+    if (!validSessions.contains(body['SESSIONID'])) {
+      return http.Response('', 401);
+    }
+    if (path == '/API/ADSModule/Servers/mc/API/Core/GetSettings') {
+      return json(mockSettings);
+    }
+    if (path == '/API/ADSModule/Servers/mc/API/Core/SetSetting') {
+      return json({'Status': true});
+    }
+    return http.Response('not found', 404);
+  });
+
+  AmpClient settingsClient() => AmpClient(
+    baseUrl: 'amp.local:8080/',
+    username: 'admin',
+    password: 'secret',
+    httpClient: fakeSettingsAmp(),
+  );
+
   MockClient fakeAmp() => MockClient((req) async {
     final path = req.url.path;
     final body = jsonDecode(req.body) as Map<String, dynamic>;
@@ -427,6 +472,39 @@ void main() {
           (e) => e.message,
           'message',
           'Umbenennen benötigt gültige Dateinamen.',
+        ),
+      ),
+    );
+    c.close();
+  });
+
+  test('lists settings from the instance settings API', () async {
+    final c = settingsClient();
+    final settings = await c.getSettings('mc');
+    expect(settings, hasLength(2));
+    expect(settings[0].name, 'MaxPlayers');
+    expect(settings[1].name, 'ServerName');
+    c.close();
+  });
+
+  test('setSetting sends the value through the instance API', () async {
+    final c = settingsClient();
+    await c.setSetting('mc', 'ServerName', 'New Server Name');
+    expect(calls.where((p) => p.endsWith('/API/Core/SetSetting')).length, 1);
+    expect(bodies.last['SettingName'], 'ServerName');
+    expect(bodies.last['Value'], 'New Server Name');
+    c.close();
+  });
+
+  test('setting name is validated before requests are sent', () async {
+    final c = settingsClient();
+    expect(
+      () => c.setSetting('mc', '', 'value'),
+      throwsA(
+        isA<AmpException>().having(
+          (e) => e.message,
+          'message',
+          'Setting-Name darf nicht leer sein.',
         ),
       ),
     );

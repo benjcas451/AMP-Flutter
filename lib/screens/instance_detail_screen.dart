@@ -31,9 +31,11 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   List<String>? _users;
   List<BackupEntry>? _backups;
   List<FileEntry>? _files;
+  List<SettingEntry>? _settings;
   bool _actionBusy = false;
   bool _backupActionBusy = false;
   bool _fileActionBusy = false;
+  bool _settingsBusy = false;
 
   @override
   void initState() {
@@ -43,6 +45,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     _loadUsers();
     _loadBackups();
     _loadFiles();
+    _loadSettings();
     _timer = Timer.periodic(const Duration(seconds: 2), (_) => _poll());
   }
 
@@ -95,6 +98,15 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     try {
       final files = await _client.getFiles(_id);
       if (mounted) setState(() => _files = files);
+    } on AmpException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    }
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final settings = await _client.getSettings(_id);
+      if (mounted) setState(() => _settings = settings);
     } on AmpException catch (e) {
       if (mounted) setState(() => _error = e.message);
     }
@@ -363,6 +375,53 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     }
   }
 
+  Future<void> _editSetting(SettingEntry setting) async {
+    final controller = TextEditingController(text: setting.value);
+    final newValue = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(setting.name),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(
+            labelText: 'Wert (${setting.type})',
+            hintText: setting.description,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Speichern'),
+          ),
+        ],
+      ),
+    );
+    if (newValue == null || newValue == setting.value) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _settingsBusy = true);
+    try {
+      await _client.setSetting(_id, setting.name, newValue);
+      await _loadSettings();
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Setting „${setting.name}“ gespeichert.')),
+        );
+      }
+    } on AmpException catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _settingsBusy = false);
+    }
+  }
+
   Future<void> _run(
     String label,
     Future<void> Function() action, {
@@ -407,7 +466,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 5,
+      length: 6,
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.instance.displayName),
@@ -425,6 +484,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
               Tab(icon: Icon(Icons.people_outline), text: 'Spieler'),
               Tab(icon: Icon(Icons.backup_outlined), text: 'Backups'),
               Tab(icon: Icon(Icons.folder_open), text: 'Dateien'),
+              Tab(icon: Icon(Icons.tune), text: 'Settings'),
             ],
           ),
         ),
@@ -485,6 +545,12 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
                     onCreateFolder: _createFolder,
                     onDelete: _deleteFile,
                     onRename: _renameFile,
+                  ),
+                  _SettingsTab(
+                    settings: _settings,
+                    busy: _settingsBusy,
+                    onRefresh: _loadSettings,
+                    onEdit: _editSetting,
                   ),
                 ],
               ),
@@ -952,6 +1018,67 @@ class _FilesTab extends StatelessWidget {
                                 ),
                               ],
                             ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+
+class _SettingsTab extends StatelessWidget {
+  const _SettingsTab({
+    required this.settings,
+    required this.onRefresh,
+    required this.onEdit,
+    this.busy = false,
+  });
+
+  final List<SettingEntry>? settings;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function(SettingEntry) onEdit;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final list = settings;
+    if (list == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: list.isEmpty
+          ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: const [
+                SizedBox(height: 120),
+                Center(child: Text('Keine Settings gefunden.')),
+              ],
+            )
+          : ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(12),
+              children: [
+                ...list.map(
+                  (SettingEntry setting) => Card(
+                    child: ListTile(
+                      title: Text(setting.name),
+                      subtitle: Text(
+                        [
+                          setting.type,
+                          setting.value,
+                          setting.description,
+                        ].where((s) => s.isNotEmpty).join(' • '),
+                      ),
+                      trailing: IconButton(
+                        tooltip: 'Bearbeiten',
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: busy ? null : () => onEdit(setting),
+                      ),
+                      isThreeLine: setting.description.isNotEmpty,
                     ),
                   ),
                 ),

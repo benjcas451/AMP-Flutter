@@ -379,6 +379,28 @@ class AmpClient {
     }, id);
   }
 
+  Future<List<SettingEntry>> getSettings(String id) async {
+    final r = await call('Core', 'GetSettings', const {}, id);
+    if (r is! Map) return const [];
+    final values = r.values
+        .whereType<Map>()
+        .map((e) => SettingEntry.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+    values.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return values;
+  }
+
+  Future<void> setSetting(String id, String name, String value) {
+    final cleanName = name.trim();
+    if (cleanName.isEmpty) {
+      throw AmpException('Setting-Name darf nicht leer sein.');
+    }
+    return _action('Core', 'SetSetting', {
+      'SettingName': cleanName,
+      'Value': value.trim(),
+    }, id);
+  }
+
   Future<void> _action(
     String module,
     String method, [

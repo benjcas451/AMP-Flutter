@@ -149,6 +149,27 @@ class InstanceStatus {
   final Map<String, Metric> metrics;
 }
 
+class SettingEntry {
+  SettingEntry({
+    required this.name,
+    required this.value,
+    required this.type,
+    required this.description,
+  });
+
+  factory SettingEntry.fromJson(Map<String, dynamic> j) => SettingEntry(
+    name: j['Name']?.toString() ?? '',
+    value: j['Value']?.toString() ?? '',
+    type: j['Type']?.toString() ?? '',
+    description: j['Description']?.toString() ?? '',
+  );
+
+  final String name;
+  final String value;
+  final String type;
+  final String description;
+}
+
 class ConsoleEntry {
   ConsoleEntry({
     required this.timestamp,
