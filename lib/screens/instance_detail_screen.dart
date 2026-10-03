@@ -609,6 +609,8 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
               ),
           ],
           bottom: const TabBar(
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
             tabs: [
               Tab(icon: Icon(Icons.dashboard_outlined), text: 'Übersicht'),
               Tab(icon: Icon(Icons.terminal), text: 'Konsole'),

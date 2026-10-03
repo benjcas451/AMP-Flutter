@@ -108,7 +108,19 @@ class AmpClient {
       if (decoded.containsKey('Title') && decoded.containsKey('StackTrace')) {
         final title = decoded['Title']?.toString() ?? '';
         if (title.toLowerCase().contains('unauthori')) throw _Unauthorized();
-        throw AmpException('$title: ${decoded['Message'] ?? ''}'.trim());
+        final msg = decoded['Message']?.toString() ?? '';
+        throw AmpException('$title: $msg'.trim());
+      }
+      // Some AMP installations report "missing method" as a structured error
+      // without a StackTrace but with a specific message.
+      final title = decoded['Title']?.toString() ?? '';
+      final message = decoded['Message']?.toString() ?? '';
+      if (title.toLowerCase().contains('missing') ||
+          message.toLowerCase().contains('missing method')) {
+        throw AmpException(
+          'API-Methode „$method" nicht gefunden (Modul $module). '
+          'Diese Funktion wird von dieser AMP-Installation nicht bereitgestellt.',
+        );
       }
       // Non-object return values are wrapped as {"result": ...}.
       if (decoded.length == 1 && decoded.containsKey('result')) {
