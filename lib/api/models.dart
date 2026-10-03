@@ -171,16 +171,10 @@ class ConsoleEntry {
 }
 
 class BackupEntry {
-  BackupEntry({
-    required this.name,
-    this.createdAt,
-    this.sizeBytes = 0,
-  });
+  BackupEntry({required this.name, this.createdAt, this.sizeBytes = 0});
 
   factory BackupEntry.fromJson(Map<String, dynamic> j) => BackupEntry(
-    name: j['BackupName']?.toString() ??
-        j['Name']?.toString() ??
-        '',
+    name: j['BackupName']?.toString() ?? j['Name']?.toString() ?? '',
     createdAt: j['Created']?.toString() ?? j['CreatedAt']?.toString(),
     sizeBytes: _parseBackupSize(j['Size']),
   );
@@ -188,6 +182,49 @@ class BackupEntry {
   final String name;
   final String? createdAt;
   final int sizeBytes;
+
+  String get sizeLabel {
+    if (sizeBytes <= 0) return '';
+    if (sizeBytes < 1024) return '$sizeBytes B';
+    final kb = sizeBytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
+    final mb = kb / 1024;
+    return '${mb.toStringAsFixed(1)} MB';
+  }
+}
+
+class FileEntry {
+  FileEntry({
+    required this.name,
+    required this.path,
+    required this.isDirectory,
+    this.sizeBytes = 0,
+    this.modifiedAt,
+  });
+
+  factory FileEntry.fromJson(Map<String, dynamic> j) => FileEntry(
+    name: j['Name']?.toString() ?? '',
+    path: j['Path']?.toString() ?? '',
+    isDirectory:
+        j['IsDirectory'] == true ||
+        j['IsDirectory'] == 'true' ||
+        j['IsFolder'] == true ||
+        j['IsFolder'] == 'true' ||
+        j['Type']?.toString().toLowerCase() == 'directory',
+    sizeBytes: _parseBackupSize(j['SizeBytes'] ?? j['Size']),
+    modifiedAt: _parseAmpDate(
+      j['Modified'] ??
+          j['ModifiedAt'] ??
+          j['LastModified'] ??
+          j['LastWriteTime'],
+    ),
+  );
+
+  final String name;
+  final String path;
+  final bool isDirectory;
+  final int sizeBytes;
+  final DateTime? modifiedAt;
 
   String get sizeLabel {
     if (sizeBytes <= 0) return '';

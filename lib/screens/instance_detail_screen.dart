@@ -30,8 +30,10 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   final List<ConsoleEntry> _console = [];
   List<String>? _users;
   List<BackupEntry>? _backups;
+  List<FileEntry>? _files;
   bool _actionBusy = false;
   bool _backupActionBusy = false;
+  bool _fileActionBusy = false;
 
   @override
   void initState() {
@@ -40,6 +42,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     _poll();
     _loadUsers();
     _loadBackups();
+    _loadFiles();
     _timer = Timer.periodic(const Duration(seconds: 2), (_) => _poll());
   }
 
@@ -88,6 +91,15 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     }
   }
 
+  Future<void> _loadFiles() async {
+    try {
+      final files = await _client.getFiles(_id);
+      if (mounted) setState(() => _files = files);
+    } on AmpException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    }
+  }
+
   String _nextBackupName() {
     final stamp = DateTime.now().toUtc().toIso8601String();
     return 'backup-${stamp.replaceAll(RegExp(r'[:.TZ-]'), '')}';
@@ -108,7 +120,10 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Abbrechen')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Abbrechen'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, controller.text.trim()),
             child: const Text('Erstellen'),
@@ -144,7 +159,10 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
         title: const Text('Backup wiederherstellen?'),
         content: Text('„${backup.name}“ wirklich wiederherstellen?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Abbrechen')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Abbrechen'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Wiederherstellen'),
@@ -161,7 +179,9 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
       await _loadBackups();
       if (mounted) {
         messenger.showSnackBar(
-          SnackBar(content: Text('Backup „${backup.name}“ wird wiederhergestellt.')),
+          SnackBar(
+            content: Text('Backup „${backup.name}“ wird wiederhergestellt.'),
+          ),
         );
       }
     } on AmpException catch (e) {
@@ -180,7 +200,10 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
         title: const Text('Backup löschen?'),
         content: Text('„${backup.name}“ dauerhaft löschen?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Abbrechen')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Abbrechen'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Löschen'),
@@ -206,6 +229,137 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
       }
     } finally {
       if (mounted) setState(() => _backupActionBusy = false);
+    }
+  }
+
+  Future<void> _createFolder() async {
+    final controller = TextEditingController();
+    final path = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ordner erstellen'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Pfad',
+            hintText: 'z. B. config/addons',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Erstellen'),
+          ),
+        ],
+      ),
+    );
+    if (path == null || path.trim().isEmpty) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _fileActionBusy = true);
+    try {
+      await _client.createDirectory(_id, path);
+      await _loadFiles();
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Ordner „$path“ wird erstellt.')),
+        );
+      }
+    } on AmpException catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _fileActionBusy = false);
+    }
+  }
+
+  Future<void> _deleteFile(FileEntry file) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Datei löschen?'),
+        content: Text('„${file.path}“ dauerhaft löschen?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Löschen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _fileActionBusy = true);
+    try {
+      await _client.deleteFile(_id, file.path);
+      await _loadFiles();
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Datei „${file.name}“ wurde gelöscht.')),
+        );
+      }
+    } on AmpException catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _fileActionBusy = false);
+    }
+  }
+
+  Future<void> _renameFile(FileEntry file) async {
+    final controller = TextEditingController(text: file.name);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Datei umbenennen'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Neuer Name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Umbenennen'),
+          ),
+        ],
+      ),
+    );
+    if (newName == null || newName.trim().isEmpty || newName == file.name)
+      return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _fileActionBusy = true);
+    try {
+      await _client.renameFile(_id, file.path, newName);
+      await _loadFiles();
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('„${file.name}“ wird umbenannt.')),
+        );
+      }
+    } on AmpException catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _fileActionBusy = false);
     }
   }
 
@@ -253,7 +407,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.instance.displayName),
@@ -270,6 +424,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
               Tab(icon: Icon(Icons.terminal), text: 'Konsole'),
               Tab(icon: Icon(Icons.people_outline), text: 'Spieler'),
               Tab(icon: Icon(Icons.backup_outlined), text: 'Backups'),
+              Tab(icon: Icon(Icons.folder_open), text: 'Dateien'),
             ],
           ),
         ),
@@ -289,7 +444,8 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
                   _OverviewTab(
                     status: _status,
                     busy: _actionBusy,
-                    onStart: () => _run('Starten', () => _client.startServer(_id)),
+                    onStart: () =>
+                        _run('Starten', () => _client.startServer(_id)),
                     onStop: () => _run(
                       'Stoppen',
                       () => _client.stopServer(_id),
@@ -321,6 +477,14 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
                     onCreate: _createBackup,
                     onRestore: _restoreBackup,
                     onDelete: _deleteBackup,
+                  ),
+                  _FilesTab(
+                    files: _files,
+                    onRefresh: _loadFiles,
+                    busy: _fileActionBusy,
+                    onCreateFolder: _createFolder,
+                    onDelete: _deleteFile,
+                    onRename: _renameFile,
                   ),
                 ],
               ),
@@ -664,7 +828,8 @@ class _BackupsTab extends StatelessWidget {
                       title: Text(backup.name),
                       subtitle: Text(
                         [
-                          if (backup.createdAt != null && backup.createdAt!.isNotEmpty)
+                          if (backup.createdAt != null &&
+                              backup.createdAt!.isNotEmpty)
                             backup.createdAt!,
                           if (backup.sizeLabel.isNotEmpty) backup.sizeLabel,
                         ].join(' • '),
@@ -684,6 +849,109 @@ class _BackupsTab extends StatelessWidget {
                           ),
                         ],
                       ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+
+class _FilesTab extends StatelessWidget {
+  const _FilesTab({
+    required this.files,
+    required this.onRefresh,
+    required this.onCreateFolder,
+    required this.onDelete,
+    required this.onRename,
+    this.busy = false,
+  });
+
+  final List<FileEntry>? files;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function() onCreateFolder;
+  final Future<void> Function(FileEntry) onDelete;
+  final Future<void> Function(FileEntry) onRename;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final list = files;
+    if (list == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: list.isEmpty
+          ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                const SizedBox(height: 120),
+                Center(
+                  child: Column(
+                    children: [
+                      const Text('Keine Dateien gefunden.'),
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: busy ? null : onCreateFolder,
+                        icon: const Icon(Icons.create_new_folder_outlined),
+                        label: const Text('Ordner erstellen'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            )
+          : ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(12),
+              children: [
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton.icon(
+                    onPressed: busy ? null : onCreateFolder,
+                    icon: const Icon(Icons.create_new_folder_outlined),
+                    label: const Text('Ordner erstellen'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...list.map(
+                  (file) => Card(
+                    child: ListTile(
+                      leading: Icon(
+                        file.isDirectory
+                            ? Icons.folder
+                            : Icons.insert_drive_file,
+                      ),
+                      title: Text(file.name),
+                      subtitle: Text(
+                        [
+                          file.path,
+                          if (file.sizeLabel.isNotEmpty) file.sizeLabel,
+                        ].join(' • '),
+                      ),
+                      trailing: file.isDirectory
+                          ? null
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: 'Umbenennen',
+                                  icon: const Icon(
+                                    Icons.drive_file_rename_outline,
+                                  ),
+                                  onPressed: busy ? null : () => onRename(file),
+                                ),
+                                IconButton(
+                                  tooltip: 'Löschen',
+                                  icon: const Icon(Icons.delete_outline),
+                                  onPressed: busy ? null : () => onDelete(file),
+                                ),
+                              ],
+                            ),
                     ),
                   ),
                 ),

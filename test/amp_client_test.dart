@@ -19,6 +19,48 @@ void main() {
     headers: {'content-type': 'application/json'},
   );
 
+  MockClient fakeFilesAmp() => MockClient((req) async {
+    final path = req.url.path;
+    final body = jsonDecode(req.body) as Map<String, dynamic>;
+    calls.add(path);
+    bodies.add(body);
+
+    if (path.endsWith('/API/Core/Login')) {
+      final sid = 'sid${++sessionCounter}';
+      validSessions.add(sid);
+      return json({'success': true, 'sessionID': sid});
+    }
+    if (!validSessions.contains(body['SESSIONID'])) {
+      return http.Response('', 401);
+    }
+    if (path == '/API/ADSModule/Servers/mc/API/Core/GetFiles') {
+      return json({
+        'Files': [
+          {'Name': 'config', 'Path': 'config', 'IsDirectory': true},
+          {
+            'Name': 'server.properties',
+            'Path': 'server.properties',
+            'IsDirectory': false,
+            'Size': 512,
+          },
+        ],
+      });
+    }
+    if (path == '/API/ADSModule/Servers/mc/API/Core/CreateDirectory' ||
+        path == '/API/ADSModule/Servers/mc/API/Core/DeleteFile' ||
+        path == '/API/ADSModule/Servers/mc/API/Core/RenameFile') {
+      return json({'Status': true});
+    }
+    return http.Response('not found', 404);
+  });
+
+  AmpClient filesClient() => AmpClient(
+    baseUrl: 'amp.local:8080/',
+    username: 'admin',
+    password: 'secret',
+    httpClient: fakeFilesAmp(),
+  );
+
   MockClient fakeAmp() => MockClient((req) async {
     final path = req.url.path;
     final body = jsonDecode(req.body) as Map<String, dynamic>;
@@ -235,45 +277,42 @@ void main() {
     });
   }
 
-  test('backup list and backup actions are handled through the instance API', () async {
-    final c = client();
-    final backupName = 'world-2024-06-01';
-    instanceActionResult = {'Status': true};
+  test(
+    'backup list and backup actions are handled through the instance API',
+    () async {
+      final c = client();
+      final backupName = 'world-2024-06-01';
+      instanceActionResult = {'Status': true};
 
-    final backups = await c.getBackups('mc');
-    expect(backups.single.name, backupName);
-    expect(backups.single.sizeBytes, 2048);
+      final backups = await c.getBackups('mc');
+      expect(backups.single.name, backupName);
+      expect(backups.single.sizeBytes, 2048);
 
-    await c.createBackup('mc', 'manual-backup');
-    await c.restoreBackup('mc', backupName);
-    await c.deleteBackup('mc', backupName);
+      await c.createBackup('mc', 'manual-backup');
+      await c.restoreBackup('mc', backupName);
+      await c.deleteBackup('mc', backupName);
 
-    expect(
-      calls.where((p) => p.endsWith('/API/Core/GetBackups')).length,
-      1,
-    );
-    expect(
-      calls.where((p) => p.endsWith('/API/Core/CreateBackup')).length,
-      1,
-    );
-    expect(
-      calls.where((p) => p.endsWith('/API/Core/RestoreBackup')).length,
-      1,
-    );
-    expect(
-      calls.where((p) => p.endsWith('/API/Core/DeleteBackup')).length,
-      1,
-    );
-    c.close();
-  });
+      expect(calls.where((p) => p.endsWith('/API/Core/GetBackups')).length, 1);
+      expect(
+        calls.where((p) => p.endsWith('/API/Core/CreateBackup')).length,
+        1,
+      );
+      expect(
+        calls.where((p) => p.endsWith('/API/Core/RestoreBackup')).length,
+        1,
+      );
+      expect(
+        calls.where((p) => p.endsWith('/API/Core/DeleteBackup')).length,
+        1,
+      );
+      c.close();
+    },
+  );
 
   test('backup names are trimmed before the request is sent', () async {
     final c = client();
     await c.createBackup('mc', '  manual-backup  ');
-    expect(
-      bodies.last['BackupName'],
-      'manual-backup',
-    );
+    expect(bodies.last['BackupName'], 'manual-backup');
     c.close();
   });
 
@@ -340,6 +379,54 @@ void main() {
           (e) => e.message,
           'message',
           'StartInstance fehlgeschlagen.',
+        ),
+      ),
+    );
+    c.close();
+  });
+
+  test('lists files from the instance file API', () async {
+    final c = filesClient();
+    final files = await c.getFiles('mc');
+    expect(files, hasLength(2));
+    expect(files[0].isDirectory, isTrue);
+    expect(files[1].sizeBytes, 512);
+    c.close();
+  });
+
+  test('file actions use the instance API', () async {
+    final c = filesClient();
+    await c.createDirectory('mc', 'plugins/new');
+    await c.deleteFile('mc', 'server.properties');
+    await c.renameFile('mc', 'server.properties', 'server-old.properties');
+    expect(
+      calls.where((p) => p.endsWith('/API/Core/CreateDirectory')).length,
+      1,
+    );
+    expect(calls.where((p) => p.endsWith('/API/Core/DeleteFile')).length, 1);
+    expect(calls.where((p) => p.endsWith('/API/Core/RenameFile')).length, 1);
+    c.close();
+  });
+
+  test('file paths are validated before requests are sent', () async {
+    final c = filesClient();
+    expect(
+      () => c.createDirectory('mc', '   '),
+      throwsA(
+        isA<AmpException>().having(
+          (e) => e.message,
+          'message',
+          'Pfad darf nicht leer sein.',
+        ),
+      ),
+    );
+    expect(
+      () => c.renameFile('mc', 'plugins/a.cfg', ''),
+      throwsA(
+        isA<AmpException>().having(
+          (e) => e.message,
+          'message',
+          'Umbenennen benötigt gültige Dateinamen.',
         ),
       ),
     );

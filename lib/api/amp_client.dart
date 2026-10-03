@@ -301,13 +301,12 @@ class AmpClient {
     final values = r is Map && r['Backups'] is List
         ? r['Backups'] as List
         : r is List
-            ? r
-            : const <dynamic>[];
+        ? r
+        : const <dynamic>[];
     return values
         .map(
-          (entry) => BackupEntry.fromJson(
-            Map<String, dynamic>.from(entry as Map),
-          ),
+          (entry) =>
+              BackupEntry.fromJson(Map<String, dynamic>.from(entry as Map)),
         )
         .toList();
   }
@@ -334,6 +333,50 @@ class AmpClient {
       throw AmpException('Backup-Name darf nicht leer sein.');
     }
     return _action('Core', 'DeleteBackup', {'BackupName': clean}, id);
+  }
+
+  // File management
+  Future<List<FileEntry>> getFiles(String id) async {
+    final r = await call('Core', 'GetFiles', const {}, id);
+    final values = r is Map && r['Files'] is List
+        ? r['Files'] as List
+        : r is List
+        ? r
+        : const <dynamic>[];
+    return values
+        .map(
+          (entry) =>
+              FileEntry.fromJson(Map<String, dynamic>.from(entry as Map)),
+        )
+        .toList();
+  }
+
+  Future<void> createDirectory(String id, String path) {
+    final clean = path.trim();
+    if (clean.isEmpty) {
+      throw AmpException('Pfad darf nicht leer sein.');
+    }
+    return _action('Core', 'CreateDirectory', {'Path': clean}, id);
+  }
+
+  Future<void> deleteFile(String id, String path) {
+    final clean = path.trim();
+    if (clean.isEmpty) {
+      throw AmpException('Pfad darf nicht leer sein.');
+    }
+    return _action('Core', 'DeleteFile', {'Path': clean}, id);
+  }
+
+  Future<void> renameFile(String id, String oldPath, String newName) {
+    final cleanOld = oldPath.trim();
+    final cleanNew = newName.trim();
+    if (cleanOld.isEmpty || cleanNew.isEmpty) {
+      throw AmpException('Umbenennen benötigt gültige Dateinamen.');
+    }
+    return _action('Core', 'RenameFile', {
+      'OldPath': cleanOld,
+      'NewName': cleanNew,
+    }, id);
   }
 
   Future<void> _action(
