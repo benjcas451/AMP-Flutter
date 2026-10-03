@@ -296,6 +296,46 @@ class AmpClient {
     return const [];
   }
 
+  Future<List<BackupEntry>> getBackups(String id) async {
+    final r = await call('Core', 'GetBackups', const {}, id);
+    final values = r is Map && r['Backups'] is List
+        ? r['Backups'] as List
+        : r is List
+            ? r
+            : const <dynamic>[];
+    return values
+        .map(
+          (entry) => BackupEntry.fromJson(
+            Map<String, dynamic>.from(entry as Map),
+          ),
+        )
+        .toList();
+  }
+
+  Future<void> createBackup(String id, String name) {
+    final clean = name.trim();
+    if (clean.isEmpty) {
+      throw AmpException('Backup-Name darf nicht leer sein.');
+    }
+    return _action('Core', 'CreateBackup', {'BackupName': clean}, id);
+  }
+
+  Future<void> restoreBackup(String id, String name) {
+    final clean = name.trim();
+    if (clean.isEmpty) {
+      throw AmpException('Backup-Name darf nicht leer sein.');
+    }
+    return _action('Core', 'RestoreBackup', {'BackupName': clean}, id);
+  }
+
+  Future<void> deleteBackup(String id, String name) {
+    final clean = name.trim();
+    if (clean.isEmpty) {
+      throw AmpException('Backup-Name darf nicht leer sein.');
+    }
+    return _action('Core', 'DeleteBackup', {'BackupName': clean}, id);
+  }
+
   Future<void> _action(
     String module,
     String method, [

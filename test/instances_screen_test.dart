@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:amp_control/api/amp_client.dart';
 import 'package:amp_control/api/models.dart';
 import 'package:amp_control/screens/instances_screen.dart';
+import 'package:amp_control/services/instance_action_controller.dart';
 import 'package:amp_control/services/settings_store.dart';
 import 'package:amp_control/state/app_state.dart';
 import 'package:flutter/material.dart';
@@ -209,5 +210,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(client.starts, 1);
     expect(find.text('AMP-Instanz: Läuft'), findsOneWidget);
+  });
+
+  test('central action controller tracks pending states and confirmation locks', () {
+    final controller = InstanceActionController();
+    expect(controller.isLocked('mc'), isFalse);
+
+    controller.beginConfirmation('mc');
+    expect(controller.isConfirming('mc'), isTrue);
+    expect(controller.isLocked('mc'), isTrue);
+
+    controller.clearConfirmation('mc');
+    expect(controller.isConfirming('mc'), isFalse);
+    expect(controller.isLocked('mc'), isFalse);
+
+    controller.beginBusy('mc', running: true);
+    expect(controller.isBusy('mc'), isTrue);
+    expect(controller.isPendingStart('mc'), isTrue);
+    expect(controller.isLocked('mc'), isTrue);
+
+    controller.finish('mc');
+    expect(controller.isBusy('mc'), isFalse);
+    expect(controller.isLocked('mc'), isFalse);
   });
 }

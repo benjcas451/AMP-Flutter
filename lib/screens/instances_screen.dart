@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../api/amp_client.dart';
 import '../api/models.dart';
+import '../services/instance_action_controller.dart';
 import '../state/app_state.dart';
 import '../widgets/state_badge.dart';
 import 'instance_detail_screen.dart';
@@ -22,8 +23,7 @@ class _InstancesScreenState extends State<InstancesScreen> {
   String? _error;
   Timer? _timer;
   AmpClient? _client;
-  final Map<String, bool> _instanceActions = {};
-  final Set<String> _confirmingInstances = {};
+  final InstanceActionController _actionState = InstanceActionController();
   int _loadVersion = 0;
 
   @override
@@ -35,8 +35,7 @@ class _InstancesScreenState extends State<InstancesScreen> {
       _client = client;
       _instances = null;
       _error = null;
-      _instanceActions.clear();
-      _confirmingInstances.clear();
+      _actionState.clearAll();
       _timer?.cancel();
       if (client == null) return;
       _load();
@@ -72,8 +71,7 @@ class _InstancesScreenState extends State<InstancesScreen> {
   }
 
   Future<void> _open(AmpInstance i) async {
-    if (_instanceActions.containsKey(i.id) ||
-        _confirmingInstances.contains(i.id)) {
+    if (_actionState.isLocked(i.id)) {
       return;
     }
     if (!i.running) {
@@ -92,15 +90,13 @@ class _InstancesScreenState extends State<InstancesScreen> {
     bool confirmStart = false,
   }) async {
     final client = _client;
-    if (client == null ||
-        _instanceActions.containsKey(i.id) ||
-        _confirmingInstances.contains(i.id)) {
+    if (client == null || _actionState.isLocked(i.id)) {
       return;
     }
     final messenger = ScaffoldMessenger.of(context);
     try {
       if (!running || confirmStart) {
-        _confirmingInstances.add(i.id);
+        _actionState.beginConfirmation(i.id);
         final confirmed = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -123,10 +119,13 @@ class _InstancesScreenState extends State<InstancesScreen> {
             ],
           ),
         );
-        if (confirmed != true) return;
+        if (confirmed != true) {
+          _actionState.clearConfirmation(i.id);
+          return;
+        }
       }
       if (!mounted || !identical(client, _client)) return;
-      setState(() => _instanceActions[i.id] = running);
+      _actionState.beginBusy(i.id, running: running);
       if (running) {
         await client.startInstanceProcess(i);
       } else {
@@ -168,8 +167,7 @@ class _InstancesScreenState extends State<InstancesScreen> {
       }
     } finally {
       if (mounted && identical(client, _client)) {
-        _confirmingInstances.remove(i.id);
-        setState(() => _instanceActions.remove(i.id));
+        _actionState.finish(i.id);
       }
     }
   }
@@ -229,7 +227,9 @@ class _InstancesScreenState extends State<InstancesScreen> {
         for (final i in instances)
           _InstanceTile(
             i,
-            starting: _instanceActions[i.id],
+            starting: _actionState.isBusy(i.id)
+                ? _actionState.isPendingStart(i.id)
+                : null,
             onTap: () => _open(i),
             onToggle: () => _setInstanceRunning(i, running: !i.running),
           ),

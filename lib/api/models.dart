@@ -170,6 +170,49 @@ class ConsoleEntry {
   final String contents;
 }
 
+class BackupEntry {
+  BackupEntry({
+    required this.name,
+    this.createdAt,
+    this.sizeBytes = 0,
+  });
+
+  factory BackupEntry.fromJson(Map<String, dynamic> j) => BackupEntry(
+    name: j['BackupName']?.toString() ??
+        j['Name']?.toString() ??
+        '',
+    createdAt: j['Created']?.toString() ?? j['CreatedAt']?.toString(),
+    sizeBytes: _parseBackupSize(j['Size']),
+  );
+
+  final String name;
+  final String? createdAt;
+  final int sizeBytes;
+
+  String get sizeLabel {
+    if (sizeBytes <= 0) return '';
+    if (sizeBytes < 1024) return '$sizeBytes B';
+    final kb = sizeBytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
+    final mb = kb / 1024;
+    return '${mb.toStringAsFixed(1)} MB';
+  }
+}
+
+int _parseBackupSize(dynamic value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is String) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return 0;
+    final parsed = int.tryParse(trimmed);
+    if (parsed != null) return parsed;
+    final numFromText = double.tryParse(trimmed);
+    if (numFromText != null) return numFromText.toInt();
+  }
+  return 0;
+}
+
 /// AMP sends dates either as ISO strings or as "/Date(1700000000000)/".
 DateTime? _parseAmpDate(dynamic v) {
   if (v == null) return null;

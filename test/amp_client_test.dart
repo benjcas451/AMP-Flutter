@@ -93,6 +93,22 @@ void main() {
         'result': {'uuid-2': 'Steve', 'uuid-1': 'Alex'},
       });
     }
+    if (path == '/API/ADSModule/Servers/mc/API/Core/GetBackups') {
+      return json({
+        'Backups': [
+          {
+            'BackupName': 'world-2024-06-01',
+            'Created': '2024-06-01T12:00:00Z',
+            'Size': 2048,
+          },
+        ],
+      });
+    }
+    if (path == '/API/ADSModule/Servers/mc/API/Core/CreateBackup' ||
+        path == '/API/ADSModule/Servers/mc/API/Core/RestoreBackup' ||
+        path == '/API/ADSModule/Servers/mc/API/Core/DeleteBackup') {
+      return json({'Status': true});
+    }
     if (path == '/API/ADSModule/Servers/mc/API/Core/Start') {
       return json({'Status': false, 'Reason': 'EULA not accepted'});
     }
@@ -218,6 +234,83 @@ void main() {
       c.close();
     });
   }
+
+  test('backup list and backup actions are handled through the instance API', () async {
+    final c = client();
+    final backupName = 'world-2024-06-01';
+    instanceActionResult = {'Status': true};
+
+    final backups = await c.getBackups('mc');
+    expect(backups.single.name, backupName);
+    expect(backups.single.sizeBytes, 2048);
+
+    await c.createBackup('mc', 'manual-backup');
+    await c.restoreBackup('mc', backupName);
+    await c.deleteBackup('mc', backupName);
+
+    expect(
+      calls.where((p) => p.endsWith('/API/Core/GetBackups')).length,
+      1,
+    );
+    expect(
+      calls.where((p) => p.endsWith('/API/Core/CreateBackup')).length,
+      1,
+    );
+    expect(
+      calls.where((p) => p.endsWith('/API/Core/RestoreBackup')).length,
+      1,
+    );
+    expect(
+      calls.where((p) => p.endsWith('/API/Core/DeleteBackup')).length,
+      1,
+    );
+    c.close();
+  });
+
+  test('backup names are trimmed before the request is sent', () async {
+    final c = client();
+    await c.createBackup('mc', '  manual-backup  ');
+    expect(
+      bodies.last['BackupName'],
+      'manual-backup',
+    );
+    c.close();
+  });
+
+  test('empty backup names are rejected before the request is sent', () async {
+    final c = client();
+    expect(
+      () => c.createBackup('mc', '   '),
+      throwsA(
+        isA<AmpException>().having(
+          (e) => e.message,
+          'message',
+          'Backup-Name darf nicht leer sein.',
+        ),
+      ),
+    );
+    expect(
+      () => c.restoreBackup('mc', ''),
+      throwsA(
+        isA<AmpException>().having(
+          (e) => e.message,
+          'message',
+          'Backup-Name darf nicht leer sein.',
+        ),
+      ),
+    );
+    expect(
+      () => c.deleteBackup('mc', '  '),
+      throwsA(
+        isA<AmpException>().having(
+          (e) => e.message,
+          'message',
+          'Backup-Name darf nicht leer sein.',
+        ),
+      ),
+    );
+    c.close();
+  });
 
   test('failed instance stop surfaces the ADS reason', () async {
     final c = client();

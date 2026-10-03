@@ -29,7 +29,9 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   String? _error;
   final List<ConsoleEntry> _console = [];
   List<String>? _users;
+  List<BackupEntry>? _backups;
   bool _actionBusy = false;
+  bool _backupActionBusy = false;
 
   @override
   void initState() {
@@ -37,6 +39,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     _client = context.read<AppModel>().client;
     _poll();
     _loadUsers();
+    _loadBackups();
     _timer = Timer.periodic(const Duration(seconds: 2), (_) => _poll());
   }
 
@@ -73,6 +76,136 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
       if (mounted) setState(() => _users = users);
     } on AmpException catch (e) {
       if (mounted) setState(() => _error = e.message);
+    }
+  }
+
+  Future<void> _loadBackups() async {
+    try {
+      final backups = await _client.getBackups(_id);
+      if (mounted) setState(() => _backups = backups);
+    } on AmpException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    }
+  }
+
+  String _nextBackupName() {
+    final stamp = DateTime.now().toUtc().toIso8601String();
+    return 'backup-${stamp.replaceAll(RegExp(r'[:.TZ-]'), '')}';
+  }
+
+  Future<void> _createBackup() async {
+    final controller = TextEditingController(text: _nextBackupName());
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Backup erstellen'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Backup-Name',
+            hintText: 'backup-20240603',
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Abbrechen')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Erstellen'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.trim().isEmpty) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _backupActionBusy = true);
+    try {
+      await _client.createBackup(_id, name);
+      await _loadBackups();
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Backup „$name“ wird erstellt.')),
+        );
+      }
+    } on AmpException catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _backupActionBusy = false);
+    }
+  }
+
+  Future<void> _restoreBackup(BackupEntry backup) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Backup wiederherstellen?'),
+        content: Text('„${backup.name}“ wirklich wiederherstellen?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Abbrechen')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Wiederherstellen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _backupActionBusy = true);
+    try {
+      await _client.restoreBackup(_id, backup.name);
+      await _loadBackups();
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Backup „${backup.name}“ wird wiederhergestellt.')),
+        );
+      }
+    } on AmpException catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _backupActionBusy = false);
+    }
+  }
+
+  Future<void> _deleteBackup(BackupEntry backup) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Backup löschen?'),
+        content: Text('„${backup.name}“ dauerhaft löschen?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Abbrechen')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Löschen'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _backupActionBusy = true);
+    try {
+      await _client.deleteBackup(_id, backup.name);
+      await _loadBackups();
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Backup „${backup.name}“ wurde gelöscht.')),
+        );
+      }
+    } on AmpException catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _backupActionBusy = false);
     }
   }
 
@@ -120,7 +253,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.instance.displayName),
@@ -136,6 +269,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
               Tab(icon: Icon(Icons.dashboard_outlined), text: 'Übersicht'),
               Tab(icon: Icon(Icons.terminal), text: 'Konsole'),
               Tab(icon: Icon(Icons.people_outline), text: 'Spieler'),
+              Tab(icon: Icon(Icons.backup_outlined), text: 'Backups'),
             ],
           ),
         ),
@@ -155,8 +289,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
                   _OverviewTab(
                     status: _status,
                     busy: _actionBusy,
-                    onStart: () =>
-                        _run('Starten', () => _client.startServer(_id)),
+                    onStart: () => _run('Starten', () => _client.startServer(_id)),
                     onStop: () => _run(
                       'Stoppen',
                       () => _client.stopServer(_id),
@@ -181,6 +314,14 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
                     },
                   ),
                   _UsersTab(users: _users, onRefresh: _loadUsers),
+                  _BackupsTab(
+                    backups: _backups,
+                    onRefresh: _loadBackups,
+                    busy: _backupActionBusy,
+                    onCreate: _createBackup,
+                    onRestore: _restoreBackup,
+                    onDelete: _deleteBackup,
+                  ),
                 ],
               ),
             ),
@@ -454,6 +595,99 @@ class _UsersTab extends StatelessWidget {
                 ),
                 title: Text(list[i]),
               ),
+            ),
+    );
+  }
+}
+
+class _BackupsTab extends StatelessWidget {
+  const _BackupsTab({
+    required this.backups,
+    required this.onRefresh,
+    required this.onCreate,
+    required this.onRestore,
+    required this.onDelete,
+    this.busy = false,
+  });
+
+  final List<BackupEntry>? backups;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function() onCreate;
+  final Future<void> Function(BackupEntry) onRestore;
+  final Future<void> Function(BackupEntry) onDelete;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final list = backups;
+    if (list == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: list.isEmpty
+          ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                const SizedBox(height: 120),
+                Center(
+                  child: Column(
+                    children: [
+                      const Text('Keine Backups vorhanden.'),
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: busy ? null : onCreate,
+                        icon: const Icon(Icons.backup_outlined),
+                        label: const Text('Backup erstellen'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            )
+          : ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(12),
+              children: [
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton.icon(
+                    onPressed: busy ? null : onCreate,
+                    icon: const Icon(Icons.backup_outlined),
+                    label: const Text('Backup erstellen'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...list.map(
+                  (backup) => Card(
+                    child: ListTile(
+                      title: Text(backup.name),
+                      subtitle: Text(
+                        [
+                          if (backup.createdAt != null && backup.createdAt!.isNotEmpty)
+                            backup.createdAt!,
+                          if (backup.sizeLabel.isNotEmpty) backup.sizeLabel,
+                        ].join(' • '),
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: 'Wiederherstellen',
+                            icon: const Icon(Icons.restore),
+                            onPressed: busy ? null : () => onRestore(backup),
+                          ),
+                          IconButton(
+                            tooltip: 'Löschen',
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: busy ? null : () => onDelete(backup),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
     );
   }
