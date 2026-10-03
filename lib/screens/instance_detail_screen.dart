@@ -32,10 +32,15 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   List<BackupEntry>? _backups;
   List<FileEntry>? _files;
   List<SettingEntry>? _settings;
+  List<SchedulerTask>? _tasks;
+  List<AmpEvent>? _events;
+  Map<String, dynamic>? _updateStatus;
   bool _actionBusy = false;
   bool _backupActionBusy = false;
   bool _fileActionBusy = false;
   bool _settingsBusy = false;
+  bool _tasksBusy = false;
+  bool _updateBusy = false;
 
   @override
   void initState() {
@@ -46,6 +51,9 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     _loadBackups();
     _loadFiles();
     _loadSettings();
+    _loadTasks();
+    _loadEvents();
+    _loadUpdateStatus();
     _timer = Timer.periodic(const Duration(seconds: 2), (_) => _poll());
   }
 
@@ -107,6 +115,33 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     try {
       final settings = await _client.getSettings(_id);
       if (mounted) setState(() => _settings = settings);
+    } on AmpException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    }
+  }
+
+  Future<void> _loadTasks() async {
+    try {
+      final tasks = await _client.getTasks(_id);
+      if (mounted) setState(() => _tasks = tasks);
+    } on AmpException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    }
+  }
+
+  Future<void> _loadEvents() async {
+    try {
+      final events = await _client.getEvents(_id);
+      if (mounted) setState(() => _events = events);
+    } on AmpException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    }
+  }
+
+  Future<void> _loadUpdateStatus() async {
+    try {
+      final status = await _client.getUpdateStatus(_id);
+      if (mounted) setState(() => _updateStatus = status);
     } on AmpException catch (e) {
       if (mounted) setState(() => _error = e.message);
     }
@@ -422,6 +457,71 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     }
   }
 
+  Future<void> _toggleTask(SchedulerTask task) async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _tasksBusy = true);
+    try {
+      await _client.setTaskEnabled(_id, task.id, !task.enabled);
+      await _loadTasks();
+      if (mounted) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              'Task „${task.name}“ ${task.enabled ? 'deaktiviert' : 'aktiviert'}.',
+            ),
+          ),
+        );
+      }
+    } on AmpException catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _tasksBusy = false);
+    }
+  }
+
+  Future<void> _runUpdate() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Update ausführen?'),
+        content: const Text(
+          'Das Update wird gestartet. Der Server kann kurz offline sein.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Update starten'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _updateBusy = true);
+    try {
+      await _client.runUpdate(_id);
+      await _loadUpdateStatus();
+      if (mounted) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Update wird ausgeführt …')),
+        );
+      }
+    } on AmpException catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _updateBusy = false);
+    }
+  }
+
   Future<void> _run(
     String label,
     Future<void> Function() action, {
@@ -466,7 +566,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 6,
+      length: 9,
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.instance.displayName),
@@ -485,6 +585,9 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
               Tab(icon: Icon(Icons.backup_outlined), text: 'Backups'),
               Tab(icon: Icon(Icons.folder_open), text: 'Dateien'),
               Tab(icon: Icon(Icons.tune), text: 'Settings'),
+              Tab(icon: Icon(Icons.schedule), text: 'Tasks'),
+              Tab(icon: Icon(Icons.notifications_outlined), text: 'Events'),
+              Tab(icon: Icon(Icons.system_update_alt), text: 'Updates'),
             ],
           ),
         ),
@@ -551,6 +654,19 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
                     busy: _settingsBusy,
                     onRefresh: _loadSettings,
                     onEdit: _editSetting,
+                  ),
+                  _TasksTab(
+                    tasks: _tasks,
+                    busy: _tasksBusy,
+                    onRefresh: _loadTasks,
+                    onToggle: _toggleTask,
+                  ),
+                  _EventsTab(events: _events, onRefresh: _loadEvents),
+                  _UpdatesTab(
+                    status: _updateStatus,
+                    busy: _updateBusy,
+                    onRefresh: _loadUpdateStatus,
+                    onRunUpdate: _runUpdate,
                   ),
                 ],
               ),
@@ -1084,6 +1200,186 @@ class _SettingsTab extends StatelessWidget {
                 ),
               ],
             ),
+    );
+  }
+}
+
+class _TasksTab extends StatelessWidget {
+  const _TasksTab({
+    required this.tasks,
+    required this.onRefresh,
+    required this.onToggle,
+    this.busy = false,
+  });
+
+  final List<SchedulerTask>? tasks;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function(SchedulerTask) onToggle;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final list = tasks;
+    if (list == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: list.isEmpty
+          ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: const [
+                SizedBox(height: 120),
+                Center(child: Text('Keine Tasks vorhanden.')),
+              ],
+            )
+          : ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(12),
+              children: [
+                ...list.map(
+                  (task) => Card(
+                    child: ListTile(
+                      leading: Icon(
+                        task.enabled ? Icons.schedule : Icons.schedule_outlined,
+                        color: task.enabled ? Colors.green : null,
+                      ),
+                      title: Text(task.name),
+                      subtitle: Text(
+                        [
+                          task.description,
+                          task.trigger,
+                        ].where((s) => s.isNotEmpty).join(' • '),
+                      ),
+                      trailing: Switch(
+                        value: task.enabled,
+                        onChanged: busy ? null : (_) => onToggle(task),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+
+class _EventsTab extends StatelessWidget {
+  const _EventsTab({required this.events, required this.onRefresh});
+
+  final List<AmpEvent>? events;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final list = events;
+    if (list == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: list.isEmpty
+          ? ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: const [
+                SizedBox(height: 120),
+                Center(child: Text('Keine Einträge.')),
+              ],
+            )
+          : ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(12),
+              children: [
+                ...list.map((event) {
+                  final color = switch (event.severity.toLowerCase()) {
+                    'error' || 'critical' => Colors.redAccent,
+                    'warning' => Colors.orange,
+                    _ => Colors.blueGrey,
+                  };
+                  final time = event.timestamp;
+                  final two = (int v) => v.toString().padLeft(2, '0');
+                  final stamp = time == null
+                      ? ''
+                      : '${two(time.hour)}:${two(time.minute)}:${two(time.second)}';
+                  return Card(
+                    child: ListTile(
+                      leading: Icon(Icons.circle, color: color, size: 12),
+                      title: Text(event.message),
+                      subtitle: Text(
+                        [
+                          stamp,
+                          event.severity,
+                        ].where((s) => s.isNotEmpty).join(' • '),
+                      ),
+                      dense: true,
+                    ),
+                  );
+                }),
+              ],
+            ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+
+class _UpdatesTab extends StatelessWidget {
+  const _UpdatesTab({
+    required this.status,
+    required this.onRefresh,
+    required this.onRunUpdate,
+    this.busy = false,
+  });
+
+  final Map<String, dynamic>? status;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function() onRunUpdate;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final data = status;
+    if (data == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final available = data['UpdateAvailable'] == true;
+    final current = data['CurrentVersion']?.toString() ?? 'Unbekannt';
+    final latest = data['LatestVersion']?.toString() ?? 'Unbekannt';
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            child: ListTile(
+              leading: Icon(
+                available
+                    ? Icons.system_update_alt
+                    : Icons.check_circle_outline,
+                color: available ? Colors.orange : Colors.green,
+              ),
+              title: Text(
+                available ? 'Update verfügbar' : 'Kein Update verfügbar',
+              ),
+              subtitle: Text(
+                [
+                  if (current != 'Unbekannt') 'Installiert: $current',
+                  if (available && latest != 'Unbekannt') 'Verfügbar: $latest',
+                ].join(' • '),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: busy || !available ? null : onRunUpdate,
+            icon: const Icon(Icons.system_update_alt),
+            label: const Text('Update starten'),
+          ),
+        ],
+      ),
     );
   }
 }

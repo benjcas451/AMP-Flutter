@@ -510,4 +510,133 @@ void main() {
     );
     c.close();
   });
+
+  MockClient fakeSchedulerAndEventsAmp() => MockClient((req) async {
+    final path = req.url.path;
+    final body = jsonDecode(req.body) as Map<String, dynamic>;
+    calls.add(path);
+    bodies.add(body);
+
+    if (path.endsWith('/API/Core/Login')) {
+      final sid = 'sid${++sessionCounter}';
+      validSessions.add(sid);
+      return json({'success': true, 'sessionID': sid});
+    }
+    if (!validSessions.contains(body['SESSIONID'])) {
+      return http.Response('', 401);
+    }
+    if (path == '/API/ADSModule/Servers/mc/API/Core/GetTasks') {
+      return json({
+        'task-1': {
+          'Id': 'task-1',
+          'Name': 'Nightly Backup',
+          'Description': 'Creates a backup every night',
+          'Trigger': 'Daily at 03:00',
+          'Enabled': true,
+        },
+        'task-2': {
+          'Id': 'task-2',
+          'Name': 'Restart server',
+          'Description': '',
+          'Trigger': 'Every 12 hours',
+          'Enabled': false,
+        },
+      });
+    }
+    if (path == '/API/ADSModule/Servers/mc/API/Core/SetTaskEnabled') {
+      return json({'Status': true});
+    }
+    if (path == '/API/ADSModule/Servers/mc/API/Core/GetEventLog') {
+      return json({
+        'event-1': {
+          'Message': 'Backup completed',
+          'Timestamp': '/Date(1700000000000)/',
+          'Severity': 'Info',
+        },
+        'event-2': {
+          'Message': 'Task failed',
+          'Timestamp': '/Date(1700000100000)/',
+          'Severity': 'Warning',
+        },
+      });
+    }
+    if (path == '/API/ADSModule/Servers/mc/API/Core/GetUpdateStatus') {
+      return json({
+        'UpdateAvailable': true,
+        'CurrentVersion': '1.0.0',
+        'LatestVersion': '1.2.0',
+      });
+    }
+    if (path == '/API/ADSModule/Servers/mc/API/Core/RunUpdate') {
+      return json({'Status': true});
+    }
+    return http.Response('not found', 404);
+  });
+
+  AmpClient schedulerClient() => AmpClient(
+    baseUrl: 'amp.local:8080/',
+    username: 'admin',
+    password: 'secret',
+    httpClient: fakeSchedulerAndEventsAmp(),
+  );
+
+  test('lists scheduler tasks', () async {
+    final c = schedulerClient();
+    final tasks = await c.getTasks('mc');
+    expect(tasks, hasLength(2));
+    expect(tasks[0].name, 'Nightly Backup');
+    expect(tasks[1].name, 'Restart server');
+    c.close();
+  });
+
+  test('task enabled can be toggled', () async {
+    final c = schedulerClient();
+    await c.setTaskEnabled('mc', 'task-1', false);
+    expect(
+      calls.where((p) => p.endsWith('/API/Core/SetTaskEnabled')).length,
+      1,
+    );
+    expect(bodies.last['TaskID'], 'task-1');
+    expect(bodies.last['Enabled'], false);
+    c.close();
+  });
+
+  test('task ID is validated before requests are sent', () async {
+    final c = schedulerClient();
+    expect(
+      () => c.setTaskEnabled('mc', '', false),
+      throwsA(
+        isA<AmpException>().having(
+          (e) => e.message,
+          'message',
+          'Task-ID darf nicht leer sein.',
+        ),
+      ),
+    );
+    c.close();
+  });
+
+  test('lists events sorted by timestamp descending', () async {
+    final c = schedulerClient();
+    final events = await c.getEvents('mc');
+    expect(events, hasLength(2));
+    expect(events[0].message, 'Task failed');
+    expect(events[1].message, 'Backup completed');
+    c.close();
+  });
+
+  test('returns update status', () async {
+    final c = schedulerClient();
+    final status = await c.getUpdateStatus('mc');
+    expect(status['UpdateAvailable'], true);
+    expect(status['LatestVersion'], '1.2.0');
+    c.close();
+  });
+
+  test('run update uses the instance API', () async {
+    final c = schedulerClient();
+    await c.runUpdate('mc');
+    expect(calls.where((p) => p.endsWith('/API/Core/RunUpdate')).length, 1);
+    c.close();
+  });
 }

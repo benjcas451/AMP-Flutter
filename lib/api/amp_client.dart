@@ -401,6 +401,51 @@ class AmpClient {
     }, id);
   }
 
+  Future<List<SchedulerTask>> getTasks(String id) async {
+    final r = await call('Core', 'GetTasks', const {}, id);
+    if (r is! Map) return const [];
+    final values = r.values
+        .whereType<Map>()
+        .map((e) => SchedulerTask.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+    values.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return values;
+  }
+
+  Future<void> setTaskEnabled(String id, String taskId, bool enabled) {
+    final cleanId = taskId.trim();
+    if (cleanId.isEmpty) {
+      throw AmpException('Task-ID darf nicht leer sein.');
+    }
+    return _action('Core', 'SetTaskEnabled', {
+      'TaskID': cleanId,
+      'Enabled': enabled,
+    }, id);
+  }
+
+  Future<List<AmpEvent>> getEvents(String id) async {
+    final r = await call('Core', 'GetEventLog', const {}, id);
+    if (r is! Map) return const [];
+    final values = r.values
+        .whereType<Map>()
+        .map((e) => AmpEvent.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+    values.sort(
+      (a, b) => b.timestamp?.compareTo(a.timestamp ?? DateTime(0)) ?? 0,
+    );
+    return values;
+  }
+
+  Future<Map<String, dynamic>> getUpdateStatus(String id) async {
+    final r = await call('Core', 'GetUpdateStatus', const {}, id);
+    if (r is Map) return Map<String, dynamic>.from(r);
+    return const {};
+  }
+
+  Future<void> runUpdate(String id) {
+    return _action('Core', 'RunUpdate', const {}, id);
+  }
+
   Future<void> _action(
     String module,
     String method, [

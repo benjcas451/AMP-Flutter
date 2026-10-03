@@ -170,6 +170,49 @@ class SettingEntry {
   final String description;
 }
 
+class SchedulerTask {
+  SchedulerTask({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.trigger,
+    required this.enabled,
+  });
+
+  factory SchedulerTask.fromJson(Map<String, dynamic> j) => SchedulerTask(
+    id: j['Id']?.toString() ?? j['TaskID']?.toString() ?? '',
+    name: j['Name']?.toString() ?? '',
+    description: j['Description']?.toString() ?? '',
+    trigger:
+        j['Trigger']?.toString() ?? j['TriggerDescription']?.toString() ?? '',
+    enabled: j['Enabled'] == true,
+  );
+
+  final String id;
+  final String name;
+  final String description;
+  final String trigger;
+  final bool enabled;
+}
+
+class AmpEvent {
+  AmpEvent({
+    required this.message,
+    required this.timestamp,
+    required this.severity,
+  });
+
+  factory AmpEvent.fromJson(Map<String, dynamic> j) => AmpEvent(
+    message: j['Message']?.toString() ?? '',
+    timestamp: _parseAmpDate(j['Timestamp'] ?? j['Time'] ?? j['DateTime']),
+    severity: j['Severity']?.toString() ?? j['Level']?.toString() ?? 'Info',
+  );
+
+  final String message;
+  final DateTime? timestamp;
+  final String severity;
+}
+
 class ConsoleEntry {
   ConsoleEntry({
     required this.timestamp,
