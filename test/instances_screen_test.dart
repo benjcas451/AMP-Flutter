@@ -212,25 +212,28 @@ void main() {
     expect(find.text('AMP-Instanz: Läuft'), findsOneWidget);
   });
 
-  test('central action controller tracks pending states and confirmation locks', () {
-    final controller = InstanceActionController();
-    expect(controller.isLocked('mc'), isFalse);
+  test(
+    'central action controller tracks pending states and confirmation locks',
+    () {
+      final controller = InstanceActionController();
+      expect(controller.isLocked('mc'), isFalse);
 
-    controller.beginConfirmation('mc');
-    expect(controller.isConfirming('mc'), isTrue);
-    expect(controller.isLocked('mc'), isTrue);
+      controller.beginConfirmation('mc');
+      expect(controller.isConfirming('mc'), isTrue);
+      expect(controller.isLocked('mc'), isTrue);
 
-    controller.clearConfirmation('mc');
-    expect(controller.isConfirming('mc'), isFalse);
-    expect(controller.isLocked('mc'), isFalse);
+      controller.clearConfirmation('mc');
+      expect(controller.isConfirming('mc'), isFalse);
+      expect(controller.isLocked('mc'), isFalse);
 
-    controller.beginBusy('mc', running: true);
-    expect(controller.isBusy('mc'), isTrue);
-    expect(controller.isPendingStart('mc'), isTrue);
-    expect(controller.isLocked('mc'), isTrue);
+      controller.beginBusy('mc', running: true);
+      expect(controller.isBusy('mc'), isTrue);
+      expect(controller.isPendingStart('mc'), isTrue);
+      expect(controller.isLocked('mc'), isTrue);
 
-    controller.finish('mc');
-    expect(controller.isBusy('mc'), isFalse);
-    expect(controller.isLocked('mc'), isFalse);
-  });
+      controller.finish('mc');
+      expect(controller.isBusy('mc'), isFalse);
+      expect(controller.isLocked('mc'), isFalse);
+    },
+  );
 }

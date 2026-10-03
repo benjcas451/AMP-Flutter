@@ -34,7 +34,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   List<SettingEntry>? _settings;
   List<SchedulerTask>? _tasks;
   List<AmpEvent>? _events;
-  Map<String, dynamic>? _updateStatus;
+  InstanceStatus? _updateStatus;
   bool _actionBusy = false;
   bool _backupActionBusy = false;
   bool _fileActionBusy = false;
@@ -47,32 +47,34 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
 
   static const _tabConfig = {
     'backups': _TabSpec(
+      module: 'LocalFileBackupPlugin',
       method: 'GetBackups',
       icon: Icon(Icons.backup_outlined),
       label: 'Backups',
     ),
     'files': _TabSpec(
-      method: 'GetFiles',
+      module: 'FileManagerPlugin',
+      method: 'GetDirectoryListing',
       icon: Icon(Icons.folder_open),
       label: 'Dateien',
     ),
     'settings': _TabSpec(
-      method: 'GetSettings',
+      method: 'GetSettingsSpec',
       icon: Icon(Icons.tune),
       label: 'Settings',
     ),
     'tasks': _TabSpec(
-      method: 'GetTasks',
+      method: 'GetScheduleData',
       icon: Icon(Icons.schedule),
-      label: 'Tasks',
+      label: 'Zeitplan',
     ),
     'events': _TabSpec(
-      method: 'GetEventLog',
+      method: 'GetAuditLogEntries',
       icon: Icon(Icons.notifications_outlined),
-      label: 'Events',
+      label: 'Ereignisse',
     ),
     'updates': _TabSpec(
-      method: 'GetUpdateStatus',
+      method: 'GetStatus',
       icon: Icon(Icons.system_update_alt),
       label: 'Updates',
     ),
@@ -81,7 +83,15 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   bool _isTabSupported(String tab) {
     final spec = _tabConfig[tab];
     if (spec == null) return true;
-    return _client.isMethodSupported(spec.method);
+    if (tab == 'updates' &&
+        !_client.isMethodSupported('UpdateApplication', instanceId: _id)) {
+      return false;
+    }
+    return _client.isMethodSupported(
+      spec.method,
+      module: spec.module,
+      instanceId: _id,
+    );
   }
 
   @override
@@ -112,7 +122,10 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
       final u = await _client.getUpdates(_id);
       if (!mounted) return;
       setState(() {
-        if (u.status != null) _status = u.status;
+        if (u.status != null) {
+          _status = u.status;
+          _updateStatus = u.status;
+        }
         _console.addAll(u.console);
         if (_console.length > _maxConsoleLines) {
           _console.removeRange(0, _console.length - _maxConsoleLines);
@@ -132,6 +145,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     void Function(T value) assign,
   ) async {
     if (!mounted) return null;
+    if (_tabLoading[tab] == true) return null;
     setState(() {
       _tabLoading[tab] = true;
       _tabErrors.remove(tab);
@@ -164,10 +178,13 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     }
   }
 
-  Future<void> _loadUsers() =>
-      _tryLoad<List<String>>('', () => _client.getUsers(_id), (List<String> v) {
-        _users = v;
-      });
+  Future<void> _loadUsers() => _tryLoad<List<String>>(
+    'users',
+    () => _client.getUsers(_id),
+    (List<String> v) {
+      _users = v;
+    },
+  );
 
   Future<void> _loadBackups() => _tryLoad<List<BackupEntry>>(
     'backups',
@@ -209,10 +226,10 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     },
   );
 
-  Future<void> _loadUpdateStatus() => _tryLoad<Map<String, dynamic>>(
+  Future<void> _loadUpdateStatus() => _tryLoad<InstanceStatus>(
     'updates',
     () => _client.getUpdateStatus(_id),
-    (Map<String, dynamic> v) {
+    (InstanceStatus v) {
       _updateStatus = v;
     },
   );
@@ -250,6 +267,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     );
     if (name == null || name.trim().isEmpty) return;
 
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _backupActionBusy = true);
     try {
@@ -289,10 +307,11 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     );
     if (confirmed != true) return;
 
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _backupActionBusy = true);
     try {
-      await _client.restoreBackup(_id, backup.name);
+      await _client.restoreBackup(_id, backup.id);
       await _loadBackups();
       if (mounted) {
         messenger.showSnackBar(
@@ -330,10 +349,11 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     );
     if (confirmed != true) return;
 
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _backupActionBusy = true);
     try {
-      await _client.deleteBackup(_id, backup.name);
+      await _client.deleteBackup(_id, backup.id);
       await _loadBackups();
       if (mounted) {
         messenger.showSnackBar(
@@ -377,6 +397,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     );
     if (path == null || path.trim().isEmpty) return;
 
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _fileActionBusy = true);
     try {
@@ -400,8 +421,8 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Datei löschen?'),
-        content: Text('„${file.path}“ dauerhaft löschen?'),
+        title: const Text('In den Papierkorb verschieben?'),
+        content: Text('„${file.path}“ in den Papierkorb verschieben?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -409,21 +430,24 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Löschen'),
+            child: const Text('Verschieben'),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
 
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _fileActionBusy = true);
     try {
-      await _client.deleteFile(_id, file.path);
+      await _client.deleteFile(_id, file.path, isDirectory: file.isDirectory);
       await _loadFiles();
       if (mounted) {
         messenger.showSnackBar(
-          SnackBar(content: Text('Datei „${file.name}“ wurde gelöscht.')),
+          SnackBar(
+            content: Text('„${file.name}“ wurde in den Papierkorb verschoben.'),
+          ),
         );
       }
     } on AmpException catch (e) {
@@ -458,13 +482,20 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
         ],
       ),
     );
-    if (newName == null || newName.trim().isEmpty || newName == file.name)
+    if (newName == null || newName.trim().isEmpty || newName == file.name) {
       return;
+    }
 
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _fileActionBusy = true);
     try {
-      await _client.renameFile(_id, file.path, newName);
+      await _client.renameFile(
+        _id,
+        file.path,
+        newName,
+        isDirectory: file.isDirectory,
+      );
       await _loadFiles();
       if (mounted) {
         messenger.showSnackBar(
@@ -515,7 +546,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
             child: const Text('Abbrechen'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            onPressed: () => Navigator.pop(ctx, controller.text),
             child: const Text('Speichern'),
           ),
         ],
@@ -523,10 +554,11 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     );
     if (newValue == null || newValue == setting.value) return;
 
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _settingsBusy = true);
     try {
-      await _client.setSetting(_id, setting.key, newValue);
+      await _client.setSetting(_id, setting.node, newValue);
       await _loadSettings();
       if (mounted) {
         messenger.showSnackBar(
@@ -545,6 +577,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
   }
 
   Future<void> _toggleTask(SchedulerTask task) async {
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _tasksBusy = true);
     try {
@@ -572,9 +605,9 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Update ausführen?'),
+        title: const Text('Spielserver aktualisieren?'),
         content: const Text(
-          'Das Update wird gestartet. Der Server kann kurz offline sein.',
+          'AMP aktualisiert die Spielserver-Dateien aus der konfigurierten Quelle.',
         ),
         actions: [
           TextButton(
@@ -590,6 +623,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     );
     if (confirmed != true) return;
 
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _updateBusy = true);
     try {
@@ -636,6 +670,7 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
       );
       if (ok != true) return;
     }
+    if (!mounted) return;
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _actionBusy = true);
@@ -701,7 +736,11 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
           icon: Icon(Icons.people_outline),
           label: 'Spieler',
         ),
-        body: _UsersTab(users: _users, onRefresh: _loadUsers),
+        body: _UsersTab(
+          users: _users,
+          onRefresh: _loadUsers,
+          error: _tabErrors['users'],
+        ),
       ),
       if (_isTabSupported('backups'))
         _TabEntry(
@@ -816,13 +855,45 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
                 ],
               ),
             Expanded(
-              child: TabBarView(children: allTabs.map((t) => t.body).toList()),
+              child: TabBarView(children: allTabs.map(_tabBody).toList()),
             ),
           ],
         ),
       ),
     );
   }
+
+  Widget _tabBody(_TabEntry tab) {
+    final error = _tabErrors[tab.id];
+    if (error == null) return tab.body;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(error, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => _reloadTab(tab.id),
+              child: const Text('Erneut versuchen'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _reloadTab(String tab) => switch (tab) {
+    'users' => _loadUsers(),
+    'backups' => _loadBackups(),
+    'files' => _loadFiles(),
+    'settings' => _loadSettings(),
+    'tasks' => _loadTasks(),
+    'events' => _loadEvents(),
+    'updates' => _loadUpdateStatus(),
+    _ => Future<void>.value(),
+  };
 }
 
 // -----------------------------------------------------------------------------
@@ -1059,15 +1130,33 @@ class _ConsoleTabState extends State<_ConsoleTab> {
 // -----------------------------------------------------------------------------
 
 class _UsersTab extends StatelessWidget {
-  const _UsersTab({required this.users, required this.onRefresh});
+  const _UsersTab({required this.users, required this.onRefresh, this.error});
 
   final List<String>? users;
   final Future<void> Function() onRefresh;
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
     final list = users;
-    if (list == null) return const Center(child: CircularProgressIndicator());
+    if (list == null) {
+      if (error == null) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(error!, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: onRefresh,
+              child: const Text('Erneut versuchen'),
+            ),
+          ],
+        ),
+      );
+    }
     return RefreshIndicator(
       onRefresh: onRefresh,
       child: list.isEmpty
@@ -1408,7 +1497,9 @@ class _SettingsTab extends StatelessWidget {
                       trailing: IconButton(
                         tooltip: 'Bearbeiten',
                         icon: const Icon(Icons.edit_outlined),
-                        onPressed: busy ? null : () => onEdit(setting),
+                        onPressed: busy || setting.readOnly
+                            ? null
+                            : () => onEdit(setting),
                       ),
                       onTap: busy ? null : () => onEdit(setting),
                     ),
@@ -1615,7 +1706,7 @@ class _EventsTab extends StatelessWidget {
                     _ => Colors.blueGrey,
                   };
                   final time = event.timestamp;
-                  final two = (int v) => v.toString().padLeft(2, '0');
+                  String two(int v) => v.toString().padLeft(2, '0');
                   final stamp = time == null
                       ? ''
                       : '${two(time.hour)}:${two(time.minute)}:${two(time.second)}';
@@ -1651,7 +1742,7 @@ class _UpdatesTab extends StatelessWidget {
     this.error,
   });
 
-  final Map<String, dynamic>? status;
+  final InstanceStatus? status;
   final Future<void> Function() onRefresh;
   final Future<void> Function() onRunUpdate;
   final bool busy;
@@ -1685,9 +1776,9 @@ class _UpdatesTab extends StatelessWidget {
       }
       return const Center(child: Text('Wird geladen…'));
     }
-    final available = data['UpdateAvailable'] == true;
-    final current = data['CurrentVersion']?.toString() ?? 'Unbekannt';
-    final latest = data['LatestVersion']?.toString() ?? 'Unbekannt';
+    final state = data.state;
+    final updating = state == AppState.updating;
+    final canUpdate = state.isStopped && state != AppState.undefined;
     return RefreshIndicator(
       onRefresh: onRefresh,
       child: ListView(
@@ -1697,25 +1788,28 @@ class _UpdatesTab extends StatelessWidget {
           Card(
             child: ListTile(
               leading: Icon(
-                available
-                    ? Icons.system_update_alt
-                    : Icons.check_circle_outline,
-                color: available ? Colors.orange : Colors.green,
+                updating ? Icons.system_update_alt : Icons.info_outline,
+                color: state.color,
               ),
               title: Text(
-                available ? 'Update verfügbar' : 'Kein Update verfügbar',
+                updating
+                    ? 'Spielserver wird aktualisiert'
+                    : 'Spielserver aktualisieren',
               ),
-              subtitle: Text(
-                [
-                  if (current != 'Unbekannt') 'Installiert: $current',
-                  if (available && latest != 'Unbekannt') 'Verfügbar: $latest',
-                ].join(' • '),
-              ),
+              subtitle: Text('Status: ${state.label}'),
             ),
           ),
           const SizedBox(height: 16),
+          Text(
+            canUpdate
+                ? 'AMP aktualisiert die Serverdateien aus der konfigurierten Quelle.'
+                : updating
+                ? 'Die Aktualisierung läuft.'
+                : 'Stoppe den Server vor einer Aktualisierung.',
+          ),
+          const SizedBox(height: 16),
           FilledButton.icon(
-            onPressed: busy || !available ? null : onRunUpdate,
+            onPressed: busy || !canUpdate ? null : onRunUpdate,
             icon: const Icon(Icons.system_update_alt),
             label: const Text('Update starten'),
           ),
@@ -1727,12 +1821,14 @@ class _UpdatesTab extends StatelessWidget {
 
 class _TabSpec {
   const _TabSpec({
+    this.module = 'Core',
     required this.method,
     required this.icon,
     required this.label,
   });
 
   final String method;
+  final String module;
   final Icon icon;
   final String label;
 }

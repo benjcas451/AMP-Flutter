@@ -13,6 +13,17 @@ class AmpException implements Exception {
   String toString() => message;
 }
 
+class AmpMethodUnavailable extends AmpException {
+  AmpMethodUnavailable(this.module, this.method)
+    : super(
+        'API-Methode „$method“ nicht gefunden (Modul $module). '
+        'Diese Funktion wird von dieser AMP-Installation nicht bereitgestellt.',
+      );
+
+  final String module;
+  final String method;
+}
+
 /// Low-level client for the AMP JSON API.
 ///
 /// All calls are `POST <baseUrl>/API/<Module>/<Method>` with a JSON body that
@@ -37,25 +48,46 @@ class AmpClient {
 
   String? _adsSession;
   final Map<String, String> _instanceSessions = {};
+  Future<String>? _adsLogin;
+  final Map<String, Future<String>> _instanceLogins = {};
 
   /// Track which API methods are supported by this AMP installation.
   /// Populated lazily when a "missing method" error is detected.
   final Set<String> supportedMethods = {};
   final Set<String> unsupportedMethods = {};
 
-  bool isMethodSupported(String method) {
-    if (supportedMethods.contains(method)) return true;
-    if (unsupportedMethods.contains(method)) return false;
+  String _methodKey(String module, String method, String? instanceId) =>
+      '${instanceId ?? 'ADS'}:$module/$method';
+
+  bool isMethodSupported(
+    String method, {
+    String module = 'Core',
+    String? instanceId,
+  }) {
+    final key = _methodKey(module, method, instanceId);
+    if (supportedMethods.contains(key)) return true;
+    if (unsupportedMethods.contains(key)) return false;
     return true; // Assume supported until proven otherwise
   }
 
-  void markMethodUnsupported(String method) {
-    unsupportedMethods.add(method);
+  void markMethodUnsupported(
+    String method, {
+    String module = 'Core',
+    String? instanceId,
+  }) {
+    final key = _methodKey(module, method, instanceId);
+    supportedMethods.remove(key);
+    unsupportedMethods.add(key);
   }
 
-  void markMethodSupported(String method) {
-    supportedMethods.add(method);
-    unsupportedMethods.remove(method);
+  void markMethodSupported(
+    String method, {
+    String module = 'Core',
+    String? instanceId,
+  }) {
+    final key = _methodKey(module, method, instanceId);
+    supportedMethods.add(key);
+    unsupportedMethods.remove(key);
   }
 
   static String normalizeUrl(String url) {
@@ -111,41 +143,45 @@ class AmpClient {
     if (res.statusCode == 401 || res.statusCode == 403) {
       throw _Unauthorized();
     }
-    if (res.statusCode != 200) {
-      throw AmpException('HTTP ${res.statusCode} bei $module/$method');
-    }
-    if (res.body.isEmpty) return null;
+    if (res.body.isEmpty && res.statusCode == 200) return null;
 
     final dynamic decoded;
     try {
       decoded = jsonDecode(utf8.decode(res.bodyBytes));
     } on FormatException {
+      if (res.statusCode != 200) {
+        throw AmpException('HTTP ${res.statusCode} bei $module/$method');
+      }
       throw AmpException('Ungültige Antwort vom Server (kein JSON).');
     }
 
     if (decoded is Map<String, dynamic>) {
-      // AMP reports errors as {"Title": ..., "Message": ..., "StackTrace": ...}.
-      if (decoded.containsKey('Title') && decoded.containsKey('StackTrace')) {
-        final title = decoded['Title']?.toString() ?? '';
-        if (title.toLowerCase().contains('unauthori')) throw _Unauthorized();
-        final msg = decoded['Message']?.toString() ?? '';
-        throw AmpException('$title: $msg'.trim());
-      }
-      // Some AMP installations report "missing method" as a structured error
-      // without a StackTrace but with a specific message.
       final title = decoded['Title']?.toString() ?? '';
       final message = decoded['Message']?.toString() ?? '';
-      if (title.toLowerCase().contains('missing') ||
-          message.toLowerCase().contains('missing method')) {
-        throw AmpException(
-          'API-Methode „$method" nicht gefunden (Modul $module). '
-          'Diese Funktion wird von dieser AMP-Installation nicht bereitgestellt.',
-        );
+      if (title.toLowerCase().contains('unauthori')) throw _Unauthorized();
+      if (title.toLowerCase().contains('missingmethod') ||
+          title.toLowerCase().contains('methodnotfound') ||
+          RegExp(
+            r'missing\s+method|method\b.*\bnot found',
+            caseSensitive: false,
+          ).hasMatch('$title $message')) {
+        throw AmpMethodUnavailable(module, method);
+      }
+      if (decoded.containsKey('Title') &&
+          (decoded.containsKey('StackTrace') ||
+              decoded.containsKey('Message'))) {
+        throw AmpException('$title: $message'.trim());
       }
       // Non-object return values are wrapped as {"result": ...}.
       if (decoded.length == 1 && decoded.containsKey('result')) {
+        if (res.statusCode != 200) {
+          throw AmpException('HTTP ${res.statusCode} bei $module/$method');
+        }
         return decoded['result'];
       }
+    }
+    if (res.statusCode != 200) {
+      throw AmpException('HTTP ${res.statusCode} bei $module/$method');
     }
     return decoded;
   }
@@ -186,10 +222,29 @@ class AmpClient {
     return sid;
   }
 
-  Future<String> _adsSessionId() async => _adsSession ??= await _login();
+  Future<String> _adsSessionId() async {
+    if (_adsSession != null) return _adsSession!;
+    final login = _adsLogin ??= _login();
+    try {
+      final sid = await login;
+      if (identical(_adsLogin, login)) _adsSession = sid;
+      return sid;
+    } finally {
+      if (identical(_adsLogin, login)) _adsLogin = null;
+    }
+  }
 
-  Future<String> _instanceSessionId(String id) async =>
-      _instanceSessions[id] ??= await _login(instanceId: id);
+  Future<String> _instanceSessionId(String id) async {
+    if (_instanceSessions.containsKey(id)) return _instanceSessions[id]!;
+    final login = _instanceLogins.putIfAbsent(id, () => _login(instanceId: id));
+    try {
+      final sid = await login;
+      if (identical(_instanceLogins[id], login)) _instanceSessions[id] = sid;
+      return sid;
+    } finally {
+      if (identical(_instanceLogins[id], login)) _instanceLogins.remove(id);
+    }
+  }
 
   /// Performs an authenticated call, logging in again once if the session
   /// has expired.
@@ -205,41 +260,41 @@ class AmpClient {
     void invalidate() {
       if (instanceId == null) {
         _adsSession = null;
+        _adsLogin = null;
         _instanceSessions.clear();
+        _instanceLogins.clear();
       } else {
         _instanceSessions.remove(instanceId);
+        _instanceLogins.remove(instanceId);
       }
     }
 
     try {
-      final result = await _post(
+      Future<dynamic> send() async => _post(
         module,
         method,
         params,
         instanceId: instanceId,
         session: await session(),
       );
-      markMethodSupported(method);
+      dynamic result;
+      try {
+        result = await send();
+      } on _Unauthorized {
+        invalidate();
+        try {
+          result = await send();
+        } on _Unauthorized {
+          throw AmpException('Keine Berechtigung für $module/$method.');
+        }
+      }
+      markMethodSupported(method, module: module, instanceId: instanceId);
       return result;
-    } on AmpException catch (e) {
-      if (e.message.toLowerCase().contains('missing') ||
-          e.message.toLowerCase().contains('nicht gefunden')) {
-        markMethodUnsupported(method);
+    } on AmpMethodUnavailable catch (e) {
+      if (e.module == module && e.method == method) {
+        markMethodUnsupported(method, module: module, instanceId: instanceId);
       }
       rethrow;
-    } on _Unauthorized {
-      invalidate();
-      try {
-        return await _post(
-          module,
-          method,
-          params,
-          instanceId: instanceId,
-          session: await session(),
-        );
-      } on _Unauthorized {
-        throw AmpException('Keine Berechtigung für $module/$method.');
-      }
     }
   }
 
@@ -250,6 +305,7 @@ class AmpClient {
       throw AmpException('Unter dieser URL läuft kein AMP-Panel.');
     }
     _adsSession = null;
+    _adsLogin = null;
     await _adsSessionId();
     return info['AppName']?.toString() ?? 'AMP';
   }
@@ -257,7 +313,11 @@ class AmpClient {
   Future<void> logout() async {
     final sid = _adsSession;
     _adsSession = null;
+    _adsLogin = null;
     _instanceSessions.clear();
+    _instanceLogins.clear();
+    supportedMethods.clear();
+    unsupportedMethods.clear();
     if (sid != null) {
       try {
         await _post('Core', 'Logout', const {}, session: sid);
@@ -270,23 +330,32 @@ class AmpClient {
 
   Future<List<AmpInstance>> getInstances() async {
     final r = await call('ADSModule', 'GetInstances');
-    if (r is! List) return const [];
-    final instances = <AmpInstance>[];
-    for (final target in r) {
-      final available = (target as Map)['AvailableInstances'];
-      if (available is! List) continue;
-      for (final i in available) {
-        final inst = AmpInstance.fromJson(Map<String, dynamic>.from(i as Map));
-        // Skip the ADS itself.
-        if (inst.module == 'ADS') continue;
-        instances.add(inst);
+    return _readResponse('ADSModule/GetInstances', r, (value) {
+      final instances = <AmpInstance>[];
+      for (final target in _list(value)) {
+        final targetMap = _map(target);
+        if (!targetMap.containsKey('AvailableInstances')) {
+          throw const FormatException();
+        }
+        final available = targetMap['AvailableInstances'];
+        if (available == null) {
+          continue; // An offline ADS target has no instances.
+        }
+        for (final i in _list(available)) {
+          final data = _map(i);
+          _requiredString(data, 'InstanceID');
+          final inst = AmpInstance.fromJson(data);
+          // Skip the ADS itself.
+          if (inst.module == 'ADS') continue;
+          instances.add(inst);
+        }
       }
-    }
-    instances.sort(
-      (a, b) =>
-          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
-    );
-    return instances;
+      instances.sort(
+        (a, b) =>
+            a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
+      );
+      return instances;
+    });
   }
 
   /// Starts the AMP instance process itself (not the game server).
@@ -295,6 +364,7 @@ class AmpClient {
       'InstanceName': i.instanceName,
     });
     _instanceSessions.remove(i.id);
+    _instanceLogins.remove(i.id);
   }
 
   /// Stops the AMP instance process itself via the ADS controller.
@@ -303,6 +373,7 @@ class AmpClient {
       'InstanceName': i.instanceName,
     });
     _instanceSessions.remove(i.id);
+    _instanceLogins.remove(i.id);
   }
 
   // ---------------------------------------------------------------------------
@@ -310,8 +381,7 @@ class AmpClient {
 
   Future<InstanceStatus> getStatus(String instanceId) async {
     final r = await call('Core', 'GetStatus', const {}, instanceId);
-    if (r is! Map) throw AmpException('Status nicht verfügbar.');
-    return InstanceStatus.fromJson(Map<String, dynamic>.from(r));
+    return _readResponse('Core/GetStatus', r, _status);
   }
 
   Future<void> startServer(String id) => _action('Core', 'Start', {}, id);
@@ -325,30 +395,38 @@ class AmpClient {
   /// Status plus console lines since the last call (per session).
   Future<InstanceUpdates> getUpdates(String id) async {
     final r = await call('Core', 'GetUpdates', const {}, id);
-    if (r is! Map) throw AmpException('Keine Daten von der Instanz.');
-    return InstanceUpdates.fromJson(Map<String, dynamic>.from(r));
+    return _readResponse('Core/GetUpdates', r, (value) {
+      final data = _map(value);
+      if (!data.containsKey('Status') && !data.containsKey('ConsoleEntries')) {
+        throw const FormatException();
+      }
+      if (data['Status'] != null) _status(data['Status']);
+      if (data['ConsoleEntries'] != null) _list(data['ConsoleEntries']);
+      return InstanceUpdates.fromJson(data);
+    });
   }
 
   Future<List<String>> getUsers(String id) async {
     final r = await call('Core', 'GetUserList', const {}, id);
-    if (r is Map) return r.values.map((v) => v.toString()).toList()..sort();
-    if (r is List) return r.map((v) => v.toString()).toList()..sort();
-    return const [];
+    return _readResponse('Core/GetUserList', r, (value) {
+      final users = value is Map ? value.values.toList() : _list(value);
+      if (users.any((user) => user is! String)) throw const FormatException();
+      return users.cast<String>().toList()..sort();
+    });
   }
 
   Future<List<BackupEntry>> getBackups(String id) async {
-    final r = await call('Core', 'GetBackups', const {}, id);
-    final values = r is Map && r['Backups'] is List
-        ? r['Backups'] as List
-        : r is List
-        ? r
-        : const <dynamic>[];
-    return values
-        .map(
-          (entry) =>
-              BackupEntry.fromJson(Map<String, dynamic>.from(entry as Map)),
-        )
-        .toList();
+    final r = await call('LocalFileBackupPlugin', 'GetBackups', const {}, id);
+    return _readResponse('LocalFileBackupPlugin/GetBackups', r, (value) {
+      final values = value is Map && value.containsKey('Backups')
+          ? value['Backups']
+          : value;
+      return _list(values).map((entry) {
+        final data = _map(entry);
+        _requiredString(data, 'Id');
+        return BackupEntry.fromJson(data);
+      }).toList();
+    });
   }
 
   Future<void> createBackup(String id, String name) {
@@ -356,39 +434,50 @@ class AmpClient {
     if (clean.isEmpty) {
       throw AmpException('Backup-Name darf nicht leer sein.');
     }
-    return _action('Core', 'CreateBackup', {'BackupName': clean}, id);
+    return _action('LocalFileBackupPlugin', 'TakeBackup', {
+      'Title': clean,
+      'Description': '',
+      'Sticky': false,
+    }, id);
   }
 
-  Future<void> restoreBackup(String id, String name) {
-    final clean = name.trim();
+  Future<void> restoreBackup(String id, String backupId) {
+    final clean = backupId.trim();
     if (clean.isEmpty) {
-      throw AmpException('Backup-Name darf nicht leer sein.');
+      throw AmpException('Backup-ID darf nicht leer sein.');
     }
-    return _action('Core', 'RestoreBackup', {'BackupName': clean}, id);
+    return _action('LocalFileBackupPlugin', 'RestoreBackup', {
+      'BackupId': clean,
+    }, id);
   }
 
-  Future<void> deleteBackup(String id, String name) {
-    final clean = name.trim();
+  Future<void> deleteBackup(String id, String backupId) {
+    final clean = backupId.trim();
     if (clean.isEmpty) {
-      throw AmpException('Backup-Name darf nicht leer sein.');
+      throw AmpException('Backup-ID darf nicht leer sein.');
     }
-    return _action('Core', 'DeleteBackup', {'BackupName': clean}, id);
+    return _action('LocalFileBackupPlugin', 'DeleteLocalBackup', {
+      'BackupId': clean,
+    }, id);
   }
 
   // File management
-  Future<List<FileEntry>> getFiles(String id) async {
-    final r = await call('Core', 'GetFiles', const {}, id);
-    final values = r is Map && r['Files'] is List
-        ? r['Files'] as List
-        : r is List
-        ? r
-        : const <dynamic>[];
-    return values
-        .map(
-          (entry) =>
-              FileEntry.fromJson(Map<String, dynamic>.from(entry as Map)),
-        )
-        .toList();
+  Future<List<FileEntry>> getFiles(String id, {String directory = ''}) async {
+    final r = await call('FileManagerPlugin', 'GetDirectoryListing', {
+      'Dir': directory,
+    }, id);
+    return _readResponse('FileManagerPlugin/GetDirectoryListing', r, (value) {
+      return _list(value).map((entry) {
+        final data = _map(entry);
+        final filename = _requiredString(data, 'Filename');
+        return FileEntry.fromJson({
+          ...data,
+          'Path': directory.isEmpty
+              ? filename
+              : '${directory.replaceAll(RegExp(r'/+$'), '')}/$filename',
+        });
+      }).toList();
+    });
   }
 
   Future<void> createDirectory(String id, String path) {
@@ -396,45 +485,63 @@ class AmpClient {
     if (clean.isEmpty) {
       throw AmpException('Pfad darf nicht leer sein.');
     }
-    return _action('Core', 'CreateDirectory', {'Path': clean}, id);
+    return _action('FileManagerPlugin', 'CreateDirectory', {
+      'NewPath': clean,
+    }, id);
   }
 
-  Future<void> deleteFile(String id, String path) {
+  Future<void> deleteFile(String id, String path, {bool isDirectory = false}) {
     final clean = path.trim();
     if (clean.isEmpty) {
       throw AmpException('Pfad darf nicht leer sein.');
     }
-    return _action('Core', 'DeleteFile', {'Path': clean}, id);
+    return _action(
+      'FileManagerPlugin',
+      isDirectory ? 'TrashDirectory' : 'TrashFile',
+      {isDirectory ? 'DirectoryName' : 'Filename': clean},
+      id,
+    );
   }
 
-  Future<void> renameFile(String id, String oldPath, String newName) {
+  Future<void> renameFile(
+    String id,
+    String oldPath,
+    String newName, {
+    bool isDirectory = false,
+  }) {
     final cleanOld = oldPath.trim();
     final cleanNew = newName.trim();
     if (cleanOld.isEmpty || cleanNew.isEmpty) {
       throw AmpException('Umbenennen benötigt gültige Dateinamen.');
     }
-    return _action('Core', 'RenameFile', {
-      'OldPath': cleanOld,
-      'NewName': cleanNew,
-    }, id);
+    return _action(
+      'FileManagerPlugin',
+      isDirectory ? 'RenameDirectory' : 'RenameFile',
+      {
+        isDirectory ? 'oldDirectory' : 'Filename': cleanOld,
+        isDirectory ? 'NewDirectoryName' : 'NewFilename': cleanNew,
+      },
+      id,
+    );
   }
 
   Future<List<SettingEntry>> getSettings(String id) async {
-    final r = await call('Core', 'GetSettings', const {}, id);
-    if (r is! Map) return const [];
-    final values = [
-      for (final e in r.entries)
-        if (e.value is Map)
-          SettingEntry.fromJson(
-            Map<String, dynamic>.from(e.value as Map),
-            key: e.key.toString(),
-          ),
-    ];
-    values.sort(
-      (a, b) =>
-          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
-    );
-    return values;
+    final r = await call('Core', 'GetSettingsSpec', const {}, id);
+    return _readResponse('Core/GetSettingsSpec', r, (value) {
+      final values = <SettingEntry>[];
+      for (final category in _map(value).values) {
+        for (final entry in _list(category)) {
+          final data = _map(entry);
+          _requiredString(data, 'Node');
+          values.add(SettingEntry.fromJson(data));
+        }
+      }
+      values.sort(
+        (a, b) =>
+            a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
+      );
+      return values;
+    });
   }
 
   Future<void> setSetting(String id, String name, String value) {
@@ -442,21 +549,26 @@ class AmpClient {
     if (cleanName.isEmpty) {
       throw AmpException('Setting-Name darf nicht leer sein.');
     }
-    return _action('Core', 'SetSetting', {
-      'SettingName': cleanName,
-      'Value': value.trim(),
+    return _action('Core', 'SetConfig', {
+      'node': cleanName,
+      'value': value,
     }, id);
   }
 
   Future<List<SchedulerTask>> getTasks(String id) async {
-    final r = await call('Core', 'GetTasks', const {}, id);
-    if (r is! Map) return const [];
-    final values = r.values
-        .whereType<Map>()
-        .map((e) => SchedulerTask.fromJson(Map<String, dynamic>.from(e)))
-        .toList();
-    values.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    return values;
+    final r = await call('Core', 'GetScheduleData', const {}, id);
+    return _readResponse('Core/GetScheduleData', r, (value) {
+      final triggers = _list(_map(value)['PopulatedTriggers']);
+      final values = triggers.map((entry) {
+        final data = _map(entry);
+        _requiredString(data, 'Id');
+        return SchedulerTask.fromJson(data);
+      }).toList();
+      values.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
+      return values;
+    });
   }
 
   Future<void> setTaskEnabled(String id, String taskId, bool enabled) {
@@ -464,33 +576,73 @@ class AmpClient {
     if (cleanId.isEmpty) {
       throw AmpException('Task-ID darf nicht leer sein.');
     }
-    return _action('Core', 'SetTaskEnabled', {
-      'TaskID': cleanId,
+    return _action('Core', 'SetTriggerEnabled', {
+      'Id': cleanId,
       'Enabled': enabled,
     }, id);
   }
 
   Future<List<AmpEvent>> getEvents(String id) async {
-    final r = await call('Core', 'GetEventLog', const {}, id);
-    if (r is! Map) return const [];
-    final values = r.values
-        .whereType<Map>()
-        .map((e) => AmpEvent.fromJson(Map<String, dynamic>.from(e)))
-        .toList();
-    values.sort(
-      (a, b) => b.timestamp?.compareTo(a.timestamp ?? DateTime(0)) ?? 0,
-    );
-    return values;
+    final r = await call('Core', 'GetAuditLogEntries', {
+      'Before': null,
+      'Count': 100,
+    }, id);
+    return _readResponse('Core/GetAuditLogEntries', r, (value) {
+      final values = _list(value)
+          .map((entry) => AmpEvent.fromJson(_map(entry)))
+          .toList();
+      values.sort(
+        (a, b) =>
+            (b.timestamp ?? DateTime(0)).compareTo(a.timestamp ?? DateTime(0)),
+      );
+      return values;
+    });
   }
 
-  Future<Map<String, dynamic>> getUpdateStatus(String id) async {
-    final r = await call('Core', 'GetUpdateStatus', const {}, id);
-    if (r is Map) return Map<String, dynamic>.from(r);
-    return const {};
-  }
+  /// Application update progress is reflected in Core/GetStatus's State.
+  /// Core/GetUpdateInfo describes AMP updates, not game server updates.
+  Future<InstanceStatus> getUpdateStatus(String id) => getStatus(id);
 
   Future<void> runUpdate(String id) {
-    return _action('Core', 'RunUpdate', const {}, id);
+    return _action('Core', 'UpdateApplication', const {}, id);
+  }
+
+  T _readResponse<T>(String method, dynamic value, T Function(dynamic) parse) {
+    if (value == false || (value is Map && value['Status'] == false)) {
+      final reason = value is Map ? value['Reason']?.toString() : null;
+      throw AmpException(reason ?? 'Abruf von $method fehlgeschlagen.');
+    }
+    try {
+      return parse(value);
+    } on FormatException {
+      throw AmpException('Ungültige Antwort bei $method.');
+    } on TypeError {
+      throw AmpException('Ungültige Antwort bei $method.');
+    } on RangeError {
+      throw AmpException('Ungültige Antwort bei $method.');
+    }
+  }
+
+  Map<String, dynamic> _map(dynamic value) {
+    if (value is! Map) throw const FormatException();
+    return Map<String, dynamic>.from(value);
+  }
+
+  InstanceStatus _status(dynamic value) {
+    final data = _map(value);
+    if (int.tryParse('${data['State']}') == null) throw const FormatException();
+    return InstanceStatus.fromJson(data);
+  }
+
+  List<dynamic> _list(dynamic value) {
+    if (value is! List) throw const FormatException();
+    return value;
+  }
+
+  String _requiredString(Map<String, dynamic> value, String key) {
+    final field = value[key];
+    if (field is! String || field.isEmpty) throw const FormatException();
+    return field;
   }
 
   Future<void> _action(

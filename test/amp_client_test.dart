@@ -33,22 +33,23 @@ void main() {
     if (!validSessions.contains(body['SESSIONID'])) {
       return http.Response('', 401);
     }
-    if (path == '/API/ADSModule/Servers/mc/API/Core/GetFiles') {
+    if (path ==
+        '/API/ADSModule/Servers/mc/API/FileManagerPlugin/GetDirectoryListing') {
       return json({
-        'Files': [
-          {'Name': 'config', 'Path': 'config', 'IsDirectory': true},
+        'result': [
+          {'Filename': 'config', 'IsDirectory': true},
           {
-            'Name': 'server.properties',
-            'Path': 'server.properties',
+            'Filename': 'server.properties',
             'IsDirectory': false,
-            'Size': 512,
+            'SizeBytes': 512,
           },
         ],
       });
     }
-    if (path == '/API/ADSModule/Servers/mc/API/Core/CreateDirectory' ||
-        path == '/API/ADSModule/Servers/mc/API/Core/DeleteFile' ||
-        path == '/API/ADSModule/Servers/mc/API/Core/RenameFile') {
+    if (path ==
+            '/API/ADSModule/Servers/mc/API/FileManagerPlugin/CreateDirectory' ||
+        path == '/API/ADSModule/Servers/mc/API/FileManagerPlugin/TrashFile' ||
+        path == '/API/ADSModule/Servers/mc/API/FileManagerPlugin/RenameFile') {
       return json({'Status': true});
     }
     return http.Response('not found', 404);
@@ -64,18 +65,21 @@ void main() {
   final mockSettings = {
     'ServerName': {
       'Name': 'ServerName',
-      'Value': 'My Server',
-      'Type': 'String',
+      'Node': 'MinecraftModule.Minecraft.ServerName',
+      'CurrentValue': 'My Server',
+      'ValType': 'String',
       'Description': 'Name of the server shown in the list',
     },
     'MaxPlayers': {
       'Name': 'MaxPlayers',
-      'Value': '20',
-      'Type': 'Integer',
+      'Node': 'MinecraftModule.Minecraft.MaxPlayers',
+      'CurrentValue': '20',
+      'ValType': 'Integer',
       'Description': 'Maximum number of players',
     },
     'MinecraftModule.Minecraft.EnableQuery': {
       'Name': '',
+      'Node': 'MinecraftModule.Minecraft.EnableQuery',
       'Value': 'false',
       'Type': 'Boolean',
       'Description': '',
@@ -96,10 +100,10 @@ void main() {
     if (!validSessions.contains(body['SESSIONID'])) {
       return http.Response('', 401);
     }
-    if (path == '/API/ADSModule/Servers/mc/API/Core/GetSettings') {
-      return json(mockSettings);
+    if (path == '/API/ADSModule/Servers/mc/API/Core/GetSettingsSpec') {
+      return json({'Minecraft': mockSettings.values.toList()});
     }
-    if (path == '/API/ADSModule/Servers/mc/API/Core/SetSetting') {
+    if (path == '/API/ADSModule/Servers/mc/API/Core/SetConfig') {
       return json({'Status': true});
     }
     return http.Response('not found', 404);
@@ -186,20 +190,25 @@ void main() {
         'result': {'uuid-2': 'Steve', 'uuid-1': 'Alex'},
       });
     }
-    if (path == '/API/ADSModule/Servers/mc/API/Core/GetBackups') {
+    if (path ==
+        '/API/ADSModule/Servers/mc/API/LocalFileBackupPlugin/GetBackups') {
       return json({
         'Backups': [
           {
-            'BackupName': 'world-2024-06-01',
-            'Created': '2024-06-01T12:00:00Z',
-            'Size': 2048,
+            'Id': 'backup-id',
+            'Name': 'world-2024-06-01',
+            'Timestamp': '2024-06-01T12:00:00Z',
+            'TotalSizeBytes': 2048,
           },
         ],
       });
     }
-    if (path == '/API/ADSModule/Servers/mc/API/Core/CreateBackup' ||
-        path == '/API/ADSModule/Servers/mc/API/Core/RestoreBackup' ||
-        path == '/API/ADSModule/Servers/mc/API/Core/DeleteBackup') {
+    if (path ==
+            '/API/ADSModule/Servers/mc/API/LocalFileBackupPlugin/TakeBackup' ||
+        path ==
+            '/API/ADSModule/Servers/mc/API/LocalFileBackupPlugin/RestoreBackup' ||
+        path ==
+            '/API/ADSModule/Servers/mc/API/LocalFileBackupPlugin/DeleteLocalBackup') {
       return json({'Status': true});
     }
     if (path == '/API/ADSModule/Servers/mc/API/Core/Start') {
@@ -340,20 +349,35 @@ void main() {
       expect(backups.single.sizeBytes, 2048);
 
       await c.createBackup('mc', 'manual-backup');
-      await c.restoreBackup('mc', backupName);
-      await c.deleteBackup('mc', backupName);
+      await c.restoreBackup('mc', 'backup-id');
+      await c.deleteBackup('mc', 'backup-id');
 
-      expect(calls.where((p) => p.endsWith('/API/Core/GetBackups')).length, 1);
       expect(
-        calls.where((p) => p.endsWith('/API/Core/CreateBackup')).length,
+        calls
+            .where((p) => p.endsWith('/API/LocalFileBackupPlugin/GetBackups'))
+            .length,
         1,
       );
       expect(
-        calls.where((p) => p.endsWith('/API/Core/RestoreBackup')).length,
+        calls
+            .where((p) => p.endsWith('/API/LocalFileBackupPlugin/TakeBackup'))
+            .length,
         1,
       );
       expect(
-        calls.where((p) => p.endsWith('/API/Core/DeleteBackup')).length,
+        calls
+            .where(
+              (p) => p.endsWith('/API/LocalFileBackupPlugin/RestoreBackup'),
+            )
+            .length,
+        1,
+      );
+      expect(
+        calls
+            .where(
+              (p) => p.endsWith('/API/LocalFileBackupPlugin/DeleteLocalBackup'),
+            )
+            .length,
         1,
       );
       c.close();
@@ -363,7 +387,7 @@ void main() {
   test('backup names are trimmed before the request is sent', () async {
     final c = client();
     await c.createBackup('mc', '  manual-backup  ');
-    expect(bodies.last['BackupName'], 'manual-backup');
+    expect(bodies.last['Title'], 'manual-backup');
     c.close();
   });
 
@@ -385,7 +409,7 @@ void main() {
         isA<AmpException>().having(
           (e) => e.message,
           'message',
-          'Backup-Name darf nicht leer sein.',
+          'Backup-ID darf nicht leer sein.',
         ),
       ),
     );
@@ -395,7 +419,7 @@ void main() {
         isA<AmpException>().having(
           (e) => e.message,
           'message',
-          'Backup-Name darf nicht leer sein.',
+          'Backup-ID darf nicht leer sein.',
         ),
       ),
     );
@@ -451,11 +475,21 @@ void main() {
     await c.deleteFile('mc', 'server.properties');
     await c.renameFile('mc', 'server.properties', 'server-old.properties');
     expect(
-      calls.where((p) => p.endsWith('/API/Core/CreateDirectory')).length,
+      calls
+          .where((p) => p.endsWith('/API/FileManagerPlugin/CreateDirectory'))
+          .length,
       1,
     );
-    expect(calls.where((p) => p.endsWith('/API/Core/DeleteFile')).length, 1);
-    expect(calls.where((p) => p.endsWith('/API/Core/RenameFile')).length, 1);
+    expect(
+      calls.where((p) => p.endsWith('/API/FileManagerPlugin/TrashFile')).length,
+      1,
+    );
+    expect(
+      calls
+          .where((p) => p.endsWith('/API/FileManagerPlugin/RenameFile'))
+          .length,
+      1,
+    );
     c.close();
   });
 
@@ -506,10 +540,7 @@ void main() {
       expect(query.value, 'false');
 
       await c.setSetting('mc', query.key, 'true');
-      expect(
-        bodies.last['SettingName'],
-        'MinecraftModule.Minecraft.EnableQuery',
-      );
+      expect(bodies.last['node'], 'MinecraftModule.Minecraft.EnableQuery');
       c.close();
     },
   );
@@ -536,10 +567,14 @@ void main() {
 
   test('setSetting sends the value through the instance API', () async {
     final c = settingsClient();
-    await c.setSetting('mc', 'ServerName', 'New Server Name');
-    expect(calls.where((p) => p.endsWith('/API/Core/SetSetting')).length, 1);
-    expect(bodies.last['SettingName'], 'ServerName');
-    expect(bodies.last['Value'], 'New Server Name');
+    await c.setSetting(
+      'mc',
+      'MinecraftModule.Minecraft.ServerName',
+      'New Server Name',
+    );
+    expect(calls.where((p) => p.endsWith('/API/Core/SetConfig')).length, 1);
+    expect(bodies.last['node'], 'MinecraftModule.Minecraft.ServerName');
+    expect(bodies.last['value'], 'New Server Name');
     c.close();
   });
 
@@ -572,49 +607,51 @@ void main() {
     if (!validSessions.contains(body['SESSIONID'])) {
       return http.Response('', 401);
     }
-    if (path == '/API/ADSModule/Servers/mc/API/Core/GetTasks') {
+    if (path == '/API/ADSModule/Servers/mc/API/Core/GetScheduleData') {
       return json({
-        'task-1': {
-          'Id': 'task-1',
-          'Name': 'Nightly Backup',
-          'Description': 'Creates a backup every night',
-          'Trigger': 'Daily at 03:00',
-          'Enabled': true,
-        },
-        'task-2': {
-          'Id': 'task-2',
-          'Name': 'Restart server',
-          'Description': '',
-          'Trigger': 'Every 12 hours',
-          'Enabled': false,
-        },
+        'AvailableMethods': [],
+        'AvailableTriggers': [],
+        'PopulatedTriggers': [
+          {
+            'Id': 'trigger-1',
+            'Description': 'Nightly Backup',
+            'TriggerType': 'TimeInterval',
+            'EnabledState': 1,
+            'Tasks': [
+              {'TaskMethodName': 'LocalFileBackupPlugin.TakeBackup'},
+            ],
+          },
+          {
+            'Id': 'trigger-2',
+            'Description': 'Restart server',
+            'TriggerType': 'TimeInterval',
+            'EnabledState': 0,
+            'Tasks': [],
+          },
+        ],
       });
     }
-    if (path == '/API/ADSModule/Servers/mc/API/Core/SetTaskEnabled') {
+    if (path == '/API/ADSModule/Servers/mc/API/Core/SetTriggerEnabled') {
       return json({'Status': true});
     }
-    if (path == '/API/ADSModule/Servers/mc/API/Core/GetEventLog') {
-      return json({
-        'event-1': {
+    if (path == '/API/ADSModule/Servers/mc/API/Core/GetAuditLogEntries') {
+      return json([
+        {
           'Message': 'Backup completed',
           'Timestamp': '/Date(1700000000000)/',
-          'Severity': 'Info',
+          'Category': 'Backup',
         },
-        'event-2': {
+        {
           'Message': 'Task failed',
           'Timestamp': '/Date(1700000100000)/',
-          'Severity': 'Warning',
+          'Category': 'Scheduler',
         },
-      });
+      ]);
     }
-    if (path == '/API/ADSModule/Servers/mc/API/Core/GetUpdateStatus') {
-      return json({
-        'UpdateAvailable': true,
-        'CurrentVersion': '1.0.0',
-        'LatestVersion': '1.2.0',
-      });
+    if (path == '/API/ADSModule/Servers/mc/API/Core/GetStatus') {
+      return json({'State': 100, 'Uptime': '', 'Metrics': {}});
     }
-    if (path == '/API/ADSModule/Servers/mc/API/Core/RunUpdate') {
+    if (path == '/API/ADSModule/Servers/mc/API/Core/UpdateApplication') {
       return json({'Status': true});
     }
     return http.Response('not found', 404);
@@ -638,12 +675,12 @@ void main() {
 
   test('task enabled can be toggled', () async {
     final c = schedulerClient();
-    await c.setTaskEnabled('mc', 'task-1', false);
+    await c.setTaskEnabled('mc', 'trigger-1', false);
     expect(
-      calls.where((p) => p.endsWith('/API/Core/SetTaskEnabled')).length,
+      calls.where((p) => p.endsWith('/API/Core/SetTriggerEnabled')).length,
       1,
     );
-    expect(bodies.last['TaskID'], 'task-1');
+    expect(bodies.last['Id'], 'trigger-1');
     expect(bodies.last['Enabled'], false);
     c.close();
   });
@@ -675,15 +712,17 @@ void main() {
   test('returns update status', () async {
     final c = schedulerClient();
     final status = await c.getUpdateStatus('mc');
-    expect(status['UpdateAvailable'], true);
-    expect(status['LatestVersion'], '1.2.0');
+    expect(status.state, AppState.updating);
     c.close();
   });
 
   test('run update uses the instance API', () async {
     final c = schedulerClient();
     await c.runUpdate('mc');
-    expect(calls.where((p) => p.endsWith('/API/Core/RunUpdate')).length, 1);
+    expect(
+      calls.where((p) => p.endsWith('/API/Core/UpdateApplication')).length,
+      1,
+    );
     c.close();
   });
 }

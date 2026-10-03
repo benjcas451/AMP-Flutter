@@ -151,33 +151,45 @@ class InstanceStatus {
 
 class SettingEntry {
   SettingEntry({
-    required this.key,
+    required this.node,
+    this.readOnly = false,
     required this.name,
     required this.value,
     required this.type,
     required this.description,
   });
 
-  /// [key] is the identifier AMP keys the setting by in the response map.
-  /// Many settings carry no display `Name`, so the key is the only thing
-  /// that tells them apart.
+  /// AMP identifies settings by their `Node`
+  /// (`MinecraftModule.Minecraft.AcceptsTransfers`). Many settings carry no
+  /// display `Name`, so the node is the only thing that tells them apart.
+  /// [key] is used when the response has no `Node`.
   factory SettingEntry.fromJson(Map<String, dynamic> j, {String key = ''}) {
     final name = j['Name']?.toString().trim() ?? '';
     final node = j['Node']?.toString().trim() ?? '';
     return SettingEntry(
-      key: key.trim().isNotEmpty ? key.trim() : (node.isNotEmpty ? node : name),
+      node: node.isNotEmpty
+          ? node
+          : (key.trim().isNotEmpty ? key.trim() : name),
+      readOnly: j['ReadOnly'] == true,
       name: name,
-      value: j['Value']?.toString() ?? '',
-      type: j['Type']?.toString() ?? '',
+      value:
+          (j.containsKey('CurrentValue') ? j['CurrentValue'] : j['Value'])
+              ?.toString() ??
+          '',
+      type: j['ValType']?.toString() ?? j['Type']?.toString() ?? '',
       description: j['Description']?.toString() ?? '',
     );
   }
 
-  final String key;
   final String name;
+  final String node;
+  final bool readOnly;
   final String value;
   final String type;
   final String description;
+
+  /// Identifier sent to `SetConfig`; same as [node].
+  String get key => node;
 
   /// Human readable title: the AMP display name, or one derived from [key]
   /// (`MinecraftModule.Minecraft.AcceptsTransfers` → `Accepts Transfers`).
@@ -208,11 +220,23 @@ class SchedulerTask {
 
   factory SchedulerTask.fromJson(Map<String, dynamic> j) => SchedulerTask(
     id: j['Id']?.toString() ?? j['TaskID']?.toString() ?? '',
-    name: j['Name']?.toString() ?? '',
-    description: j['Description']?.toString() ?? '',
+    name: j['Name']?.toString() ?? j['Description']?.toString() ?? '',
+    description: j['Tasks'] is List
+        ? (j['Tasks'] as List)
+              .map(
+                (entry) => (entry as Map)['TaskMethodName']?.toString() ?? '',
+              )
+              .where((s) => s.isNotEmpty)
+              .join(', ')
+        : j['Description']?.toString() ?? '',
     trigger:
-        j['Trigger']?.toString() ?? j['TriggerDescription']?.toString() ?? '',
-    enabled: j['Enabled'] == true,
+        j['TriggerType']?.toString() ??
+        j['Trigger']?.toString() ??
+        j['TriggerDescription']?.toString() ??
+        '',
+    enabled: j.containsKey('EnabledState')
+        ? (int.tryParse('${j['EnabledState']}') ?? 0) != 0
+        : j['Enabled'] == true,
   );
 
   final String id;
@@ -232,7 +256,11 @@ class AmpEvent {
   factory AmpEvent.fromJson(Map<String, dynamic> j) => AmpEvent(
     message: j['Message']?.toString() ?? '',
     timestamp: _parseAmpDate(j['Timestamp'] ?? j['Time'] ?? j['DateTime']),
-    severity: j['Severity']?.toString() ?? j['Level']?.toString() ?? 'Info',
+    severity:
+        j['Severity']?.toString() ??
+        j['Level']?.toString() ??
+        j['Category']?.toString() ??
+        'Info',
   );
 
   final String message;
@@ -262,15 +290,25 @@ class ConsoleEntry {
 }
 
 class BackupEntry {
-  BackupEntry({required this.name, this.createdAt, this.sizeBytes = 0});
+  BackupEntry({
+    required this.name,
+    this.id = '',
+    this.createdAt,
+    this.sizeBytes = 0,
+  });
 
   factory BackupEntry.fromJson(Map<String, dynamic> j) => BackupEntry(
+    id: j['Id']?.toString() ?? '',
     name: j['BackupName']?.toString() ?? j['Name']?.toString() ?? '',
-    createdAt: j['Created']?.toString() ?? j['CreatedAt']?.toString(),
-    sizeBytes: _parseBackupSize(j['Size']),
+    createdAt:
+        j['Timestamp']?.toString() ??
+        j['Created']?.toString() ??
+        j['CreatedAt']?.toString(),
+    sizeBytes: _parseBackupSize(j['TotalSizeBytes'] ?? j['Size']),
   );
 
   final String name;
+  final String id;
   final String? createdAt;
   final int sizeBytes;
 
@@ -294,8 +332,8 @@ class FileEntry {
   });
 
   factory FileEntry.fromJson(Map<String, dynamic> j) => FileEntry(
-    name: j['Name']?.toString() ?? '',
-    path: j['Path']?.toString() ?? '',
+    name: j['Filename']?.toString() ?? j['Name']?.toString() ?? '',
+    path: j['Path']?.toString() ?? j['Filename']?.toString() ?? '',
     isDirectory:
         j['IsDirectory'] == true ||
         j['IsDirectory'] == 'true' ||
