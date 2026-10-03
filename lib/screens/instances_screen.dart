@@ -22,6 +22,9 @@ class _InstancesScreenState extends State<InstancesScreen> {
   String? _error;
   Timer? _timer;
   AmpClient? _client;
+  final Map<String, bool> _instanceActions = {};
+  final Set<String> _confirmingInstances = {};
+  int _loadVersion = 0;
 
   @override
   void didChangeDependencies() {
@@ -32,6 +35,8 @@ class _InstancesScreenState extends State<InstancesScreen> {
       _client = client;
       _instances = null;
       _error = null;
+      _instanceActions.clear();
+      _confirmingInstances.clear();
       _timer?.cancel();
       if (client == null) return;
       _load();
@@ -48,58 +53,125 @@ class _InstancesScreenState extends State<InstancesScreen> {
   Future<void> _load() async {
     final client = _client;
     if (client == null) return;
+    final version = ++_loadVersion;
     try {
       final list = await client.getInstances();
-      if (!mounted || !identical(client, _client)) return;
+      if (!mounted || !identical(client, _client) || version != _loadVersion) {
+        return;
+      }
       setState(() {
         _instances = list;
         _error = null;
       });
     } on AmpException catch (e) {
-      if (!mounted || !identical(client, _client)) return;
+      if (!mounted || !identical(client, _client) || version != _loadVersion) {
+        return;
+      }
       setState(() => _error = e.message);
     }
   }
 
   Future<void> _open(AmpInstance i) async {
+    if (_instanceActions.containsKey(i.id) ||
+        _confirmingInstances.contains(i.id)) {
+      return;
+    }
     if (!i.running) {
-      final start = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(i.displayName),
-          content: const Text(
-            'Die AMP-Instanz ist nicht gestartet. Jetzt starten?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Abbrechen'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Starten'),
-            ),
-          ],
-        ),
-      );
-      if (start != true || !mounted) return;
-      final messenger = ScaffoldMessenger.of(context);
-      try {
-        await _client!.startInstanceProcess(i);
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Instanz wird gestartet …')),
-        );
-      } on AmpException catch (e) {
-        messenger.showSnackBar(SnackBar(content: Text(e.message)));
-      }
-      await Future<void>.delayed(const Duration(seconds: 3));
-      await _load();
+      await _setInstanceRunning(i, running: true, confirmStart: true);
       return;
     }
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => InstanceDetailScreen(instance: i)),
     );
-    _load();
+    if (mounted) _load();
+  }
+
+  Future<void> _setInstanceRunning(
+    AmpInstance i, {
+    required bool running,
+    bool confirmStart = false,
+  }) async {
+    final client = _client;
+    if (client == null ||
+        _instanceActions.containsKey(i.id) ||
+        _confirmingInstances.contains(i.id)) {
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      if (!running || confirmStart) {
+        _confirmingInstances.add(i.id);
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(running ? 'Instanz starten?' : 'Instanz stoppen?'),
+            content: Text(
+              running
+                  ? '${i.displayName}: Die AMP-Instanz ist nicht gestartet. Jetzt starten?'
+                  : '${i.displayName}: Die gesamte AMP-Instanz wird gestoppt. '
+                        'Ein laufender Server wird dabei ebenfalls beendet.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Abbrechen'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(running ? 'Instanz starten' : 'Instanz stoppen'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+      }
+      if (!mounted || !identical(client, _client)) return;
+      setState(() => _instanceActions[i.id] = running);
+      if (running) {
+        await client.startInstanceProcess(i);
+      } else {
+        await client.stopInstanceProcess(i);
+      }
+      if (!mounted || !identical(client, _client)) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            running ? 'Instanz wird gestartet …' : 'Instanz wird gestoppt …',
+          ),
+        ),
+      );
+      // Keep controls disabled until ADS reports the actual process state.
+      for (var attempt = 0; attempt <= 15; attempt++) {
+        await _load();
+        if (!mounted || !identical(client, _client)) return;
+        if (_instances?.any(
+              (item) => item.id == i.id && item.running == running,
+            ) ==
+            true) {
+          return;
+        }
+        if (attempt == 15) break;
+        await Future<void>.delayed(const Duration(seconds: 2));
+        if (!mounted || !identical(client, _client)) return;
+      }
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Der Statuswechsel wurde noch nicht bestätigt. '
+            'Bitte die Instanzliste aktualisieren.',
+          ),
+        ),
+      );
+    } on AmpException catch (e) {
+      if (mounted && identical(client, _client)) {
+        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      if (mounted && identical(client, _client)) {
+        _confirmingInstances.remove(i.id);
+        setState(() => _instanceActions.remove(i.id));
+      }
+    }
   }
 
   @override
@@ -154,17 +226,30 @@ class _InstancesScreenState extends State<InstancesScreen> {
               title: Text(_error!),
             ),
           ),
-        for (final i in instances) _InstanceTile(i, onTap: () => _open(i)),
+        for (final i in instances)
+          _InstanceTile(
+            i,
+            starting: _instanceActions[i.id],
+            onTap: () => _open(i),
+            onToggle: () => _setInstanceRunning(i, running: !i.running),
+          ),
       ],
     );
   }
 }
 
 class _InstanceTile extends StatelessWidget {
-  const _InstanceTile(this.instance, {required this.onTap});
+  const _InstanceTile(
+    this.instance, {
+    required this.starting,
+    required this.onTap,
+    required this.onToggle,
+  });
 
   final AmpInstance instance;
   final VoidCallback onTap;
+  final VoidCallback onToggle;
+  final bool? starting;
 
   @override
   Widget build(BuildContext context) {
@@ -173,32 +258,44 @@ class _InstanceTile extends StatelessWidget {
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
+        onTap: starting == null ? onTap : null,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  Text(
+                    i.displayName,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  Text(
+                    i.subtitle,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 16,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    starting != null
+                        ? (starting! ? 'Instanz startet …' : 'Instanz stoppt …')
+                        : 'AMP-Instanz: ${i.running ? 'Läuft' : 'Gestoppt'}',
+                  ),
+                  if (i.running)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          i.displayName,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        Text(
-                          i.subtitle,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
+                        const Text('Server: '),
+                        StateBadge(i.appState),
                       ],
                     ),
-                  ),
-                  i.running
-                      ? StateBadge(i.appState)
-                      : const StateBadge.offline(),
                 ],
               ),
               if (metrics.isNotEmpty) ...[
@@ -215,6 +312,32 @@ class _InstanceTile extends StatelessWidget {
                   ],
                 ),
               ],
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: starting == null ? onToggle : null,
+                    icon: starting != null
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(i.running ? Icons.stop : Icons.play_arrow),
+                    label: Text(
+                      i.running ? 'Instanz stoppen' : 'Instanz starten',
+                    ),
+                  ),
+                  if (i.running)
+                    TextButton.icon(
+                      onPressed: starting == null ? onTap : null,
+                      icon: const Icon(Icons.chevron_right),
+                      label: const Text('Server verwalten'),
+                    ),
+                ],
+              ),
             ],
           ),
         ),

@@ -7,8 +7,10 @@ Flutter-App (Android & iOS) zur Steuerung eines CubeCoders-AMP-Panels über dess
 - **Einstellungen**: Server-URL, Benutzer, Passwort – mit Verbindungstest, sicher gespeichert
   (Android Keystore / iOS Keychain)
 - **Instanzliste**: alle Instanzen des ADS mit Status, CPU/RAM/Spielern, Auto-Refresh
+  - AMP-Instanzen direkt starten / stoppen, mit getrenntem Instanz- und Serverstatus
+  - Bestätigung vor dem Instanzstopp; Aktionen bleiben bis zur Statusbestätigung gesperrt
 - **Instanz-Details**
-  - Übersicht: Status, Metriken, Starten / Stoppen / Neustarten / Kill
+  - Übersicht: Serverstatus, Metriken, Server starten / stoppen / neustarten / Kill
   - Konsole: Live-Ausgabe, Befehle senden
   - Spieler: aktuell verbundene Benutzer
 
@@ -25,6 +27,9 @@ lib/
 
 Instanzen werden über den ADS-Proxy angesprochen (`/API/ADSModule/Servers/<id>/API/...`),
 die App braucht daher nur die URL des ADS (z. B. `http://192.168.1.10:8080`).
+Die AMP-Instanzen selbst werden über `ADSModule/StartInstance` und
+`ADSModule/StopInstance` gesteuert. Beim Stoppen einer Instanz wird auch ein darin
+laufender Server beendet; der ADS-Controller selbst wird nicht in der Liste angezeigt.
 
 ## Bauen
 

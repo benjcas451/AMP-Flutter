@@ -250,8 +250,20 @@ class AmpClient {
   }
 
   /// Starts the AMP instance process itself (not the game server).
-  Future<void> startInstanceProcess(AmpInstance i) =>
-      _action('ADSModule', 'StartInstance', {'InstanceName': i.instanceName});
+  Future<void> startInstanceProcess(AmpInstance i) async {
+    await _action('ADSModule', 'StartInstance', {
+      'InstanceName': i.instanceName,
+    });
+    _instanceSessions.remove(i.id);
+  }
+
+  /// Stops the AMP instance process itself via the ADS controller.
+  Future<void> stopInstanceProcess(AmpInstance i) async {
+    await _action('ADSModule', 'StopInstance', {
+      'InstanceName': i.instanceName,
+    });
+    _instanceSessions.remove(i.id);
+  }
 
   // ---------------------------------------------------------------------------
   // Instance (game server)
@@ -291,8 +303,8 @@ class AmpClient {
     String? instanceId,
   ]) async {
     final r = await call(module, method, params, instanceId);
-    if (r is Map && r['Status'] == false) {
-      final reason = r['Reason']?.toString();
+    if (r == false || (r is Map && r['Status'] == false)) {
+      final reason = r is Map ? r['Reason']?.toString() : null;
       throw AmpException(
         reason == null || reason.isEmpty ? '$method fehlgeschlagen.' : reason,
       );
