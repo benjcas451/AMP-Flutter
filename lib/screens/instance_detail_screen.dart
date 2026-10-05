@@ -485,14 +485,29 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     final newValue = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(setting.name),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: 'Wert (${setting.type})',
-            hintText: setting.description,
-          ),
+        title: Text(setting.displayName),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (setting.description.isNotEmpty) ...[
+              Text(setting.description),
+              const SizedBox(height: 12),
+            ],
+            TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: setting.type.isEmpty
+                    ? 'Wert'
+                    : 'Wert (${setting.type})',
+                helperText:
+                    setting.key.isNotEmpty && setting.key != setting.displayName
+                    ? setting.key
+                    : null,
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -511,11 +526,13 @@ class _InstanceDetailScreenState extends State<InstanceDetailScreen> {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _settingsBusy = true);
     try {
-      await _client.setSetting(_id, setting.name, newValue);
+      await _client.setSetting(_id, setting.key, newValue);
       await _loadSettings();
       if (mounted) {
         messenger.showSnackBar(
-          SnackBar(content: Text('Setting „${setting.name}“ gespeichert.')),
+          SnackBar(
+            content: Text('Setting „${setting.displayName}“ gespeichert.'),
+          ),
         );
       }
     } on AmpException catch (e) {
@@ -1386,25 +1403,66 @@ class _SettingsTab extends StatelessWidget {
                 ...list.map(
                   (SettingEntry setting) => Card(
                     child: ListTile(
-                      title: Text(setting.name),
-                      subtitle: Text(
-                        [
-                          setting.type,
-                          setting.value,
-                          setting.description,
-                        ].where((s) => s.isNotEmpty).join(' • '),
-                      ),
+                      title: Text(setting.displayName),
+                      subtitle: _SettingSubtitle(setting: setting),
                       trailing: IconButton(
                         tooltip: 'Bearbeiten',
                         icon: const Icon(Icons.edit_outlined),
                         onPressed: busy ? null : () => onEdit(setting),
                       ),
-                      isThreeLine: setting.description.isNotEmpty,
+                      onTap: busy ? null : () => onEdit(setting),
                     ),
                   ),
                 ),
               ],
             ),
+    );
+  }
+}
+
+class _SettingSubtitle extends StatelessWidget {
+  const _SettingSubtitle({required this.setting});
+
+  final SettingEntry setting;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final value = setting.value.isEmpty ? '(leer)' : setting.value;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (setting.description.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(setting.description),
+          ),
+        Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(
+                text: value,
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+              if (setting.type.isNotEmpty) TextSpan(text: ' • ${setting.type}'),
+            ],
+          ),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        if (setting.key.isNotEmpty && setting.key != setting.displayName)
+          Text(
+            setting.key,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontFamily: 'monospace',
+              color: theme.colorScheme.outline,
+            ),
+          ),
+      ],
     );
   }
 }

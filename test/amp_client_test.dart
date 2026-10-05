@@ -74,6 +74,12 @@ void main() {
       'Type': 'Integer',
       'Description': 'Maximum number of players',
     },
+    'MinecraftModule.Minecraft.EnableQuery': {
+      'Name': '',
+      'Value': 'false',
+      'Type': 'Boolean',
+      'Description': '',
+    },
   };
 
   MockClient fakeSettingsAmp() => MockClient((req) async {
@@ -481,10 +487,51 @@ void main() {
   test('lists settings from the instance settings API', () async {
     final c = settingsClient();
     final settings = await c.getSettings('mc');
-    expect(settings, hasLength(2));
-    expect(settings[0].name, 'MaxPlayers');
-    expect(settings[1].name, 'ServerName');
+    expect(settings, hasLength(3));
+    expect(settings[0].displayName, 'Enable Query');
+    expect(settings[1].name, 'MaxPlayers');
+    expect(settings[2].name, 'ServerName');
     c.close();
+  });
+
+  test(
+    'settings without a name keep their key and get a readable title',
+    () async {
+      final c = settingsClient();
+      final settings = await c.getSettings('mc');
+      final query = settings.firstWhere((s) => s.name.isEmpty);
+      expect(query.key, 'MinecraftModule.Minecraft.EnableQuery');
+      expect(query.displayName, 'Enable Query');
+      expect(query.type, 'Boolean');
+      expect(query.value, 'false');
+
+      await c.setSetting('mc', query.key, 'true');
+      expect(
+        bodies.last['SettingName'],
+        'MinecraftModule.Minecraft.EnableQuery',
+      );
+      c.close();
+    },
+  );
+
+  test('display names are derived from setting keys', () {
+    String title(String key) =>
+        SettingEntry.fromJson(const {}, key: key).displayName;
+
+    expect(
+      title('Meta.GenericModule.AutoRestartOnCrash'),
+      'Auto Restart On Crash',
+    );
+    expect(title('MinecraftModule.Minecraft.ServerIP'), 'Server IP');
+    expect(title('Core.Webserver.UseHTTPSRedirect'), 'Use HTTPS Redirect');
+    expect(title('max_players'), 'max players');
+    expect(title(''), 'Unbenannte Einstellung');
+    expect(
+      SettingEntry.fromJson(const {
+        'Name': 'Accepts Transfers',
+      }, key: 'X.Y').displayName,
+      'Accepts Transfers',
+    );
   });
 
   test('setSetting sends the value through the instance API', () async {
