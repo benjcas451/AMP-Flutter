@@ -422,11 +422,18 @@ class AmpClient {
   Future<List<SettingEntry>> getSettings(String id) async {
     final r = await call('Core', 'GetSettings', const {}, id);
     if (r is! Map) return const [];
-    final values = r.values
-        .whereType<Map>()
-        .map((e) => SettingEntry.fromJson(Map<String, dynamic>.from(e)))
-        .toList();
-    values.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final values = [
+      for (final e in r.entries)
+        if (e.value is Map)
+          SettingEntry.fromJson(
+            Map<String, dynamic>.from(e.value as Map),
+            key: e.key.toString(),
+          ),
+    ];
+    values.sort(
+      (a, b) =>
+          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
+    );
     return values;
   }
 

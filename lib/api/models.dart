@@ -151,23 +151,50 @@ class InstanceStatus {
 
 class SettingEntry {
   SettingEntry({
+    required this.key,
     required this.name,
     required this.value,
     required this.type,
     required this.description,
   });
 
-  factory SettingEntry.fromJson(Map<String, dynamic> j) => SettingEntry(
-    name: j['Name']?.toString() ?? '',
-    value: j['Value']?.toString() ?? '',
-    type: j['Type']?.toString() ?? '',
-    description: j['Description']?.toString() ?? '',
-  );
+  /// [key] is the identifier AMP keys the setting by in the response map.
+  /// Many settings carry no display `Name`, so the key is the only thing
+  /// that tells them apart.
+  factory SettingEntry.fromJson(Map<String, dynamic> j, {String key = ''}) {
+    final name = j['Name']?.toString().trim() ?? '';
+    final node = j['Node']?.toString().trim() ?? '';
+    return SettingEntry(
+      key: key.trim().isNotEmpty ? key.trim() : (node.isNotEmpty ? node : name),
+      name: name,
+      value: j['Value']?.toString() ?? '',
+      type: j['Type']?.toString() ?? '',
+      description: j['Description']?.toString() ?? '',
+    );
+  }
 
+  final String key;
   final String name;
   final String value;
   final String type;
   final String description;
+
+  /// Human readable title: the AMP display name, or one derived from [key]
+  /// (`MinecraftModule.Minecraft.AcceptsTransfers` → `Accepts Transfers`).
+  String get displayName {
+    if (name.isNotEmpty) return name;
+    final last = key
+        .split(RegExp(r'[./:]'))
+        .lastWhere((s) => s.isNotEmpty, orElse: () => key);
+    final words = last
+        .replaceAll('_', ' ')
+        .replaceAllMapped(
+          RegExp(r'(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])'),
+          (_) => ' ',
+        )
+        .trim();
+    return words.isEmpty ? 'Unbenannte Einstellung' : words;
+  }
 }
 
 class SchedulerTask {
