@@ -1501,7 +1501,9 @@ class _SettingsTab extends StatelessWidget {
                             ? null
                             : () => onEdit(setting),
                       ),
-                      onTap: busy ? null : () => onEdit(setting),
+                      onTap: busy || setting.readOnly
+                          ? null
+                          : () => onEdit(setting),
                     ),
                   ),
                 ),

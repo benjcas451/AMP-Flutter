@@ -127,6 +127,27 @@ void main() {
     expect(find.text('Alex'), findsOneWidget);
   });
 
+  testWidgets('read-only settings cannot be opened for editing', (
+    tester,
+  ) async {
+    responses['Core/GetSettingsSpec'] = {
+      'Minecraft': [
+        {
+          'Node': 'MinecraftModule.Server.MOTD',
+          'Name': 'Server message',
+          'CurrentValue': 'hello',
+          'ValType': 'String',
+          'ReadOnly': true,
+        },
+      ],
+    };
+    await showScreen(tester);
+    await select(tester, 'Settings');
+    await tester.tap(find.text('Server message'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+  });
+
   testWidgets(
     'unsupported plugins in one instance do not hide tabs in another',
     (tester) async {
