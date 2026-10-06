@@ -43,6 +43,39 @@ flutter test
 
 Bundle-ID: iOS `de.tschapps.ampControl`, Android `de.tschapps.amp_control`.
 
+## CI & TestFlight (GitHub Actions)
+
+- **CI** (`.github/workflows/ci.yml`): `flutter analyze` und `flutter test` auf macOS bei jedem
+  Pull Request und Push auf `main`.
+- **TestFlight** (`.github/workflows/testflight.yml`): baut ein signiertes IPA und lädt es zu
+  App Store Connect hoch – automatisch bei jedem Push auf `main`, manuell für beliebige Branches
+  über *Actions → TestFlight → Run workflow*. Zertifikat und Provisioning-Profil holt der Workflow
+  selbst über die App Store Connect API ([Codemagic CLI tools](https://github.com/codemagic-ci-cd/cli-tools)),
+  die Build-Nummer ist immer die zuletzt hochgeladene + 1.
+
+Einmalige Einrichtung:
+
+1. In App Store Connect unter *Benutzer und Zugriff → Integrationen → App Store Connect API*
+   einen Team-Schlüssel mit der Rolle **App Manager** anlegen. `.p8`-Datei herunterladen,
+   Key-ID und Issuer-ID notieren.
+2. Einen privaten Schlüssel für das Distributions-Zertifikat erzeugen und gut aufbewahren
+   (derselbe Schlüssel sorgt dafür, dass das Zertifikat wiederverwendet wird):
+   ```bash
+   ssh-keygen -t rsa -b 2048 -m PEM -f cert_key -q -N ""
+   ```
+3. Im GitHub-Repo unter *Settings → Secrets and variables → Actions* anlegen:
+
+   | Secret | Inhalt |
+   | --- | --- |
+   | `APP_STORE_CONNECT_ISSUER_ID` | Issuer-ID |
+   | `APP_STORE_CONNECT_KEY_IDENTIFIER` | Key-ID |
+   | `APP_STORE_CONNECT_PRIVATE_KEY` | kompletter Inhalt der `AuthKey_<KEY_ID>.p8` |
+   | `CERTIFICATE_PRIVATE_KEY` | kompletter Inhalt von `cert_key` |
+
+Hinweise: Beim ersten Lauf legt der Workflow ein neues *Apple Distribution*-Zertifikat an,
+falls keines zum Schlüssel passt – Apple erlaubt nur wenige davon pro Team. Die `version` in
+`pubspec.yaml` muss höher sein als die zuletzt im App Store veröffentlichte Version.
+
 ## Hinweise
 
 - HTTP ist erlaubt (`usesCleartextTraffic` / `NSAllowsArbitraryLoads`), damit das Panel im LAN

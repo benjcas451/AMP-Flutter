@@ -1,0 +1,122 @@
+name: TestFlight
+
+# Builds a signed release IPA and uploads it to App Store Connect.
+# Runs on every push to main and manually (Actions → TestFlight → Run workflow,
+# any branch can be selected there).
+#
+# Required repository secrets:
+#   APP_STORE_CONNECT_ISSUER_ID       Issuer ID of the App Store Connect API key
+#   APP_STORE_CONNECT_KEY_IDENTIFIER  Key ID of the API key
+#   APP_STORE_CONNECT_PRIVATE_KEY     Contents of the AuthKey_<KEY_ID>.p8 file
+#   CERTIFICATE_PRIVATE_KEY           RSA private key (PEM) for the distribution
+#                                     certificate, see README
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+env:
+  BUNDLE_ID: de.tschapps.ampControl
+
+jobs:
+  upload:
+    name: Build & upload to TestFlight
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Check secrets
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          CERTIFICATE_PRIVATE_KEY: ${{ secrets.CERTIFICATE_PRIVATE_KEY }}
+        run: |
+          missing=0
+          for name in APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_KEY_IDENTIFIER \
+                      APP_STORE_CONNECT_PRIVATE_KEY CERTIFICATE_PRIVATE_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Repository secret $name is not set."
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Codemagic CLI tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/cm"
+          "$RUNNER_TEMP/cm/bin/pip" install --quiet codemagic-cli-tools
+          echo "$RUNNER_TEMP/cm/bin" >> "$GITHUB_PATH"
+
+      - run: flutter pub get
+
+      - run: flutter test
+
+      - name: Set up code signing
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          CERTIFICATE_PRIVATE_KEY: ${{ secrets.CERTIFICATE_PRIVATE_KEY }}
+        run: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --platform IOS \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles --project ios/Runner.xcodeproj
+
+      - name: Determine build number
+        id: build_number
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          app_id=$(app-store-connect apps list \
+            --bundle-id-identifier "$BUNDLE_ID" \
+            --strict-match-identifier \
+            --json | jq -r '.[0].id // empty')
+          latest=""
+          if [ -n "$app_id" ]; then
+            latest=$(app-store-connect get-latest-build-number "$app_id" \
+              --platform IOS 2>/dev/null | tail -n 1 || true)
+          fi
+          if [[ "$latest" =~ ^[0-9]+$ ]]; then
+            next=$((latest + 1))
+          else
+            echo "::warning::No previous build found, falling back to the run number."
+            next=${{ github.run_number }}
+          fi
+          echo "Using build number $next"
+          echo "value=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Build IPA
+        run: |
+          flutter build ipa --release \
+            --build-number=${{ steps.build_number.outputs.value }} \
+            --export-options-plist="$HOME/export_options.plist"
+
+      - name: Upload to App Store Connect
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: app-store-connect publish --path "build/ios/ipa/*.ipa"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ipa-${{ steps.build_number.outputs.value }}
+          path: build/ios/ipa/*.ipa
+          retention-days: 7
